@@ -4,8 +4,8 @@
 
   const playing = $derived(player.status.index !== null && !player.status.paused);
   const title = $derived(player.track
-    ? [player.track.artist, player.track.title].filter(Boolean).join(" - ") || "Untitled track"
-    : "Ready for music");
+    ? [player.track.artist, player.track.title].filter(Boolean).join(" - ") || "Canción sin título"
+    : "Listo para la música");
   let marquee: HTMLDivElement;
   let titleText: HTMLSpanElement;
   let overflow = $state(0);
@@ -54,7 +54,7 @@
 <div class="classic">
   <div class="titlebar" data-tauri-drag-region>
     <span class="title-lines" data-tauri-drag-region></span>
-    <span data-tauri-drag-region>CLASSIC · STEREO PLAYER</span>
+    <span data-tauri-drag-region>CLÁSICO · REPRODUCTOR ESTÉREO</span>
     <span class="title-lines" data-tauri-drag-region></span>
   </div>
 
@@ -66,34 +66,34 @@
           <div class="bar-track"><div class="bar" style:height={`${level * 100}%`}></div></div>
         {/each}
       </div>
-      <div class="meter-label"><span>∞ SPECTRUM</span><span>STEREO</span></div>
+      <div class="meter-label"><span>∞ ESPECTRO</span><span>ESTÉREO</span></div>
     </div>
     <div class="track-panel">
-      <div class="track-heading"><span>NOW PLAYING</span><span class:lit={playing}>● SIGNAL</span></div>
+      <div class="track-heading"><span>SONANDO</span><span class:lit={playing}>● SEÑAL</span></div>
       <div class="marquee" bind:this={marquee} style:--travel={`${-overflow}px`} style:--marquee-duration={`${Math.max(8, overflow / 24 + 4)}s`}>
         <span bind:this={titleText} class:scrolling={overflow > 0}>{title}</span>
       </div>
-      <div class="album" title={player.track?.album || "No album"}><b>ALBUM</b> {player.track?.album || "—"}</div>
-      <div class="format"><span>PCM <b>•••</b> AUDIO</span><span>DIGITAL STEREO</span></div>
+      <div class="album" title={player.track?.album || "Sin álbum"}><b>ÁLBUM</b> {player.track?.album || "—"}</div>
+      <div class="format"><span>PCM <b>•••</b> AUDIO</span><span>ESTÉREO DIGITAL</span></div>
     </div>
   </div>
 
   <div class="seek-row">
-    <label for="classic-seek">SEEK</label>
-    <input id="classic-seek" aria-label="Playback position" type="range" min="0" max={duration || 1} step="0.1" value={position} disabled={duration === 0}
+    <label for="classic-seek">POSICIÓN</label>
+    <input id="classic-seek" aria-label="Posición de reproducción" type="range" min="0" max={duration || 1} step="0.1" value={position} disabled={duration === 0}
       oninput={(event) => { dragging = true; localPosition = +event.currentTarget.value; }} onchange={commitSeek} />
     <span>{fmtTime(duration)}</span>
   </div>
 
   <div class="controls">
     <div class="transport">
-      <button aria-label="Previous track" title="Previous track" onclick={() => prev()}><svg viewBox="0 0 24 18" aria-hidden="true"><path d="M3 2h3v14H3zM20 2v14L7 9z" /></svg></button>
-      <button class="play" aria-label={playing ? "Pause" : "Play"} title={playing ? "Pause" : "Play"} onclick={() => togglePause()}><svg viewBox="0 0 24 18" aria-hidden="true">{#if playing}<path d="M5 2h5v14H5zM14 2h5v14h-5z" />{:else}<path d="M6 1v16L21 9z" />{/if}</svg></button>
-      <button aria-label="Next track" title="Next track" onclick={() => next()}><svg viewBox="0 0 24 18" aria-hidden="true"><path d="M18 2h3v14h-3zM4 2v14l13-7z" /></svg></button>
+      <button aria-label="Canción anterior" title="Canción anterior" onclick={() => prev()}><svg viewBox="0 0 24 18" aria-hidden="true"><path d="M3 2h3v14H3zM20 2v14L7 9z" /></svg></button>
+      <button class="play" aria-label={playing ? "Pausar" : "Reproducir"} title={playing ? "Pausar" : "Reproducir"} onclick={() => togglePause()}><svg viewBox="0 0 24 18" aria-hidden="true">{#if playing}<path d="M5 2h5v14H5zM14 2h5v14h-5z" />{:else}<path d="M6 1v16L21 9z" />{/if}</svg></button>
+      <button aria-label="Canción siguiente" title="Canción siguiente" onclick={() => next()}><svg viewBox="0 0 24 18" aria-hidden="true"><path d="M18 2h3v14h-3zM4 2v14l13-7z" /></svg></button>
     </div>
     <div class="volume">
       <label for="classic-volume">VOL</label>
-      <input id="classic-volume" aria-label="Volume" type="range" min="0" max="100" step="1" value={player.status.volume} oninput={(event) => setVolume(+event.currentTarget.value)} />
+      <input id="classic-volume" aria-label="Volumen" type="range" min="0" max="100" step="1" value={player.status.volume} oninput={(event) => setVolume(+event.currentTarget.value)} />
       <span>{Math.round(player.status.volume)}%</span>
     </div>
     <span class="badge">HI-FI</span>

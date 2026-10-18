@@ -48,11 +48,11 @@ pub fn scan(root: &Path) -> Vec<Track> {
                 artist: tag
                     .and_then(|tag| tag.artist())
                     .map(|s| s.into_owned())
-                    .unwrap_or_else(|| "Unknown Artist".into()),
+                    .unwrap_or_else(|| "Artista desconocido".into()),
                 album: tag
                     .and_then(|tag| tag.album())
                     .map(|s| s.into_owned())
-                    .unwrap_or_else(|| "Unknown Album".into()),
+                    .unwrap_or_else(|| "Álbum desconocido".into()),
                 uri: path.to_string_lossy().into_owned(),
                 track_no: tag.and_then(|tag| tag.track()),
                 duration: file
@@ -138,8 +138,8 @@ mod tests {
             scan(dir.path()),
             vec![Track {
                 title: "x".into(),
-                artist: "Unknown Artist".into(),
-                album: "Unknown Album".into(),
+                artist: "Artista desconocido".into(),
+                album: "Álbum desconocido".into(),
                 uri: path.to_string_lossy().into_owned(),
                 track_no: None,
                 duration: None,

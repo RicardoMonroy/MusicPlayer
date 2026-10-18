@@ -64,19 +64,19 @@
 <div class="app" style="--accent: {player.accent}">
   <section class="library">
     <header>
-      <h1>Library</h1>
-      <span class="count">{player.tracks.length} tracks</span>
-      <input placeholder="Search" bind:value={query} />
-      <button class="pill ghost" onclick={() => showView("compact")}>Mini player</button>
+      <h1>Biblioteca</h1>
+      <span class="count">{player.tracks.length} canciones</span>
+      <input placeholder="Buscar" bind:value={query} />
+      <button class="pill ghost" onclick={() => showView("compact")}>Mini reproductor</button>
       <button class="pill" onclick={pickFolder} disabled={scanning}>
-        {scanning ? "Scanning…" : "Choose folder"}
+        {scanning ? "Escaneando…" : "Elegir carpeta"}
       </button>
     </header>
 
     {#if player.tracks.length === 0}
       <div class="empty">
-        <p>No music yet.</p>
-        <button class="pill" onclick={pickFolder}>Choose your music folder</button>
+        <p>Aún no hay música.</p>
+        <button class="pill" onclick={pickFolder}>Elige tu carpeta de música</button>
       </div>
     {:else}
       <!-- shortcut: renders every row; add virtualization past ~10k tracks. -->
@@ -107,23 +107,23 @@
         <svg viewBox="0 0 24 24"><path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3z" /></svg>
       {/if}
     </div>
-    <h2>{track?.title ?? "Nothing playing"}</h2>
-    <p>{track ? `${track.artist} · ${track.album}` : "Double-click a track"}</p>
+    <h2>{track?.title ?? "Nada en reproducción"}</h2>
+    <p>{track ? `${track.artist} · ${track.album}` : "Haz doble clic en una canción"}</p>
   </aside>
 
   <footer class="bar">
     <div class="buttons">
-      <button class="icon" onclick={prev} aria-label="Previous">
+      <button class="icon" onclick={prev} aria-label="Anterior">
         <svg viewBox="0 0 24 24"><path d="M6 6h2v12H6zm3.5 6 8.5 6V6z" /></svg>
       </button>
-      <button class="icon play" onclick={togglePause} aria-label="Play/Pause">
+      <button class="icon play" onclick={togglePause} aria-label="Reproducir/Pausar">
         {#if player.status.paused || player.status.index == null}
           <svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
         {:else}
           <svg viewBox="0 0 24 24"><path d="M6 5h4v14H6zm8 0h4v14h-4z" /></svg>
         {/if}
       </button>
-      <button class="icon" onclick={next} aria-label="Next">
+      <button class="icon" onclick={next} aria-label="Siguiente">
         <svg viewBox="0 0 24 24"><path d="M16 6h2v12h-2zM6 18l8.5-6L6 6z" /></svg>
       </button>
     </div>

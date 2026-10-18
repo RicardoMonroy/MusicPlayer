@@ -15,13 +15,13 @@
 <div class="compact">
   <skin.component />
   <nav>
-    <button title="Next skin" onclick={() => (skin = nextSkin(skin))}>
+    <button title="Siguiente skin" onclick={() => (skin = nextSkin(skin))}>
       <svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 9 9h-2a7 7 0 1 1-2.05-4.95L14 10h7V3l-2.64 2.64A8.96 8.96 0 0 0 12 3" /></svg>
     </button>
-    <button title="Full player" onclick={() => showView("main")}>
+    <button title="Reproductor completo" onclick={() => showView("main")}>
       <svg viewBox="0 0 24 24"><path d="M4 4h7v2H6v5H4zm16 16h-7v-2h5v-5h2z" /></svg>
     </button>
-    <button title="Hide to tray" onclick={() => win.hide()}>
+    <button title="Ocultar en la bandeja" onclick={() => win.hide()}>
       <svg viewBox="0 0 24 24"><path d="M6 11h12v2H6z" /></svg>
     </button>
   </nav>

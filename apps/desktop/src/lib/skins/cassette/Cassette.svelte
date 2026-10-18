@@ -14,7 +14,7 @@
   <div class="shell" data-tauri-drag-region>
     <div class="label" style="--accent: {player.accent}" data-tauri-drag-region>
       <div class="lines" data-tauri-drag-region>
-        <span class="title">{player.track?.title ?? "Insert tape"}</span>
+        <span class="title">{player.track?.title ?? "Inserta un casete"}</span>
         <span class="artist">{player.track?.artist ?? "—"}</span>
       </div>
       <div class="window" data-tauri-drag-region>
@@ -37,11 +37,11 @@
   </div>
 
   <div class="keys">
-    <button onclick={prev} aria-label="Previous">◀◀</button>
-    <button class:down={playing} onclick={togglePause} aria-label="Play/Pause">
+    <button onclick={prev} aria-label="Anterior">◀◀</button>
+    <button class:down={playing} onclick={togglePause} aria-label="Reproducir/Pausar">
       {playing ? "❚❚" : "▶"}
     </button>
-    <button onclick={next} aria-label="Next">▶▶</button>
+    <button onclick={next} aria-label="Siguiente">▶▶</button>
   </div>
 </div>
 

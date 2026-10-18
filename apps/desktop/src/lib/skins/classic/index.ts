@@ -3,7 +3,7 @@ import Classic from "./Classic.svelte";
 
 export const skin: Skin = {
   id: "classic",
-  name: "Classic",
+  name: "Clásica",
   width: 550,
   height: 232,
   component: Classic,

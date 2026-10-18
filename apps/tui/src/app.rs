@@ -18,9 +18,9 @@ pub const TABS: [Tab; 3] = [Tab::Library, Tab::Albums, Tab::Queue];
 impl Tab {
     pub fn title(self) -> &'static str {
         match self {
-            Tab::Library => "Library",
-            Tab::Albums => "Albums",
-            Tab::Queue => "Queue",
+            Tab::Library => "Biblioteca",
+            Tab::Albums => "Álbumes",
+            Tab::Queue => "Cola",
         }
     }
 }

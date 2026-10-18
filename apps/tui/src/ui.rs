@@ -3,7 +3,7 @@ use ratatui::{
     layout::{Alignment, Constraint, Layout, Rect},
     style::{Color, Modifier, Style, Stylize},
     text::{Line, Span},
-    widgets::{Block, BorderType, Cell, Gauge, Paragraph, Row, Table},
+    widgets::{Block, BorderType, Cell, Paragraph, Row, Table},
 };
 
 use crate::app::{App, TABS, Tab, fmt_time};
@@ -59,7 +59,7 @@ fn draw_header(f: &mut Frame, app: &mut App, area: Rect) {
             Span::raw("▏").fg(ACCENT),
         ])
     } else if app.filter.is_empty() {
-        Line::from(" / search ".fg(DIM))
+        Line::from(" / buscar ".fg(DIM))
     } else {
         Line::from(vec![
             Span::raw(" / ").fg(ACCENT),
@@ -107,16 +107,16 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
                 })
                 .collect();
             (
-                Row::new(["", "Title", "Artist", "Album", "Time"]),
+                Row::new(["", "Título", "Artista", "Álbum", "Duración"]),
                 vec![
                     Constraint::Length(2),
                     Constraint::Fill(3),
                     Constraint::Fill(2),
                     Constraint::Fill(2),
-                    Constraint::Length(6),
+                    Constraint::Length(8),
                 ],
                 rows,
-                format!(" {} · {} tracks ", app.tab.title(), tracks.len()),
+                format!(" {} · {} canciones ", app.tab.title(), tracks.len()),
             )
         }
         Tab::Albums => {
@@ -129,9 +129,9 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
                         Cell::from(a.name.clone()),
                         Cell::from(a.artist.clone()).fg(DIM),
                         Cell::from(format!(
-                            "{} track{}",
+                            "{} canci{}",
                             a.tracks.len(),
-                            if a.tracks.len() == 1 { "" } else { "s" }
+                            if a.tracks.len() == 1 { "ón" } else { "ones" }
                         ))
                         .fg(DIM),
                         Cell::from(fmt_time(total)).fg(DIM),
@@ -139,15 +139,15 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
                 })
                 .collect();
             (
-                Row::new(["Album", "Artist", "Tracks", "Time"]),
+                Row::new(["Álbum", "Artista", "Canciones", "Duración"]),
                 vec![
                     Constraint::Fill(3),
                     Constraint::Fill(2),
-                    Constraint::Length(11),
+                    Constraint::Length(13),
                     Constraint::Length(8),
                 ],
                 rows,
-                format!(" Albums · {} ", app.albums.len()),
+                format!(" Álbumes · {} ", app.albums.len()),
             )
         }
     };
@@ -160,10 +160,10 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
 
     if rows.is_empty() {
         let msg = match app.tab {
-            Tab::Queue => "Queue is empty. Pick something in Library or Albums.".to_string(),
-            _ if !app.filter.is_empty() => format!("Nothing matches “{}”.", app.filter),
+            Tab::Queue => "La cola está vacía. Elige algo en Biblioteca o Álbumes.".to_string(),
+            _ if !app.filter.is_empty() => format!("Nada coincide con “{}”.", app.filter),
             _ => format!(
-                "No music in {}.\nRun: musicplayer-tui <folder>",
+                "No hay música en {}.\nEjecuta: musicplayer-tui <carpeta>",
                 app.folder.display()
             ),
         };
@@ -190,7 +190,7 @@ fn draw_now(f: &mut Frame, app: &mut App, area: Rect) {
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
         .border_style(Style::new().fg(ACCENT))
-        .title(" Now playing ".bold().fg(ACCENT));
+        .title(" Reproduciendo ".bold().fg(ACCENT));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -211,7 +211,7 @@ fn draw_now(f: &mut Frame, app: &mut App, area: Rect) {
             Span::raw(" · ").fg(DIM),
             Span::raw(&t.album).fg(DIM),
         ]),
-        None => Line::from("Nothing playing — press Enter on a track".fg(DIM)),
+        None => Line::from("Nada en reproducción — pulsa Enter en una canción".fg(DIM)),
     };
     f.render_widget(Paragraph::new(line), info);
 
@@ -231,19 +231,13 @@ fn draw_now(f: &mut Frame, app: &mut App, area: Rect) {
         Paragraph::new(fmt_time(s.duration)).alignment(Alignment::Right),
         total,
     );
-    f.render_widget(
-        Gauge::default()
-            .ratio(ratio)
-            .label("")
-            .gauge_style(Style::new().fg(ACCENT).bg(BG_SEL)),
-        bar,
-    );
+    f.render_widget(meter(ratio, bar.width, ACCENT), bar);
     app.areas.progress = bar;
 
     let [b0, b1, b2, _, vol_label, vol] = Layout::horizontal([
-        Constraint::Length(14),
         Constraint::Length(16),
-        Constraint::Length(14),
+        Constraint::Length(18),
+        Constraint::Length(16),
         Constraint::Fill(1),
         Constraint::Length(10),
         Constraint::Length(24),
@@ -253,9 +247,17 @@ fn draw_now(f: &mut Frame, app: &mut App, area: Rect) {
 
     let playing = s.index.is_some() && !s.paused;
     let buttons = [
-        (b0, "⏮  Prev", false),
-        (b1, if playing { "⏸  Pause" } else { "▶  Play" }, true),
-        (b2, "Next  ⏭", false),
+        (b0, "⏮  Anterior", false),
+        (
+            b1,
+            if playing {
+                "⏸  Pausar"
+            } else {
+                "▶  Reproducir"
+            },
+            true,
+        ),
+        (b2, "Siguiente  ⏭", false),
     ];
     for (i, (r, label, primary)) in buttons.into_iter().enumerate() {
         let style = if primary {
@@ -284,28 +286,38 @@ fn draw_now(f: &mut Frame, app: &mut App, area: Rect) {
     );
     let vol_bar = Rect::new(vol.x, vol.y + 1, vol.width, 1);
     f.render_widget(
-        Gauge::default()
-            .ratio((s.volume / 100.0).clamp(0.0, 1.0))
-            .label("")
-            .gauge_style(Style::new().fg(Color::Rgb(120, 200, 255)).bg(BG_SEL)),
+        meter(s.volume / 100.0, vol_bar.width, Color::Rgb(120, 200, 255)),
         vol_bar,
     );
     app.areas.volume = vol_bar;
 }
 
+/// One-line bar; ratatui's Gauge leaves a gap for its centered label.
+fn meter(ratio: f64, width: u16, color: Color) -> Paragraph<'static> {
+    let filled = (ratio.clamp(0.0, 1.0) * width as f64).round() as usize;
+    Paragraph::new(Line::from(vec![
+        Span::raw("█".repeat(filled)).fg(color),
+        Span::raw("░".repeat(width as usize - filled)).fg(BG_SEL),
+    ]))
+}
+
 fn draw_help(f: &mut Frame, app: &App, area: Rect) {
     let keys: &[(&str, &str)] = if app.searching {
-        &[("type", "filter"), ("Enter", "done"), ("Esc", "clear")]
+        &[
+            ("escribe", "filtrar"),
+            ("Enter", "listo"),
+            ("Esc", "borrar"),
+        ]
     } else {
         &[
-            ("Space", "play/pause"),
-            ("q", "quit"),
-            ("Enter", "play"),
-            ("n/p", "next/prev"),
-            ("←/→", "seek 5s"),
-            ("+/-", "volume"),
-            ("Tab", "switch tab"),
-            ("/", "search"),
+            ("Espacio", "reproducir/pausar"),
+            ("q", "salir"),
+            ("Enter", "reproducir"),
+            ("n/p", "sig./ant."),
+            ("←/→", "±5 s"),
+            ("+/-", "volumen"),
+            ("Tab", "pestaña"),
+            ("/", "buscar"),
         ]
     };
     let spans: Vec<Span> = keys
@@ -339,7 +351,7 @@ mod tests {
             .map(|c| c.symbol())
             .collect();
         assert!(screen.contains("Midnight City"));
-        assert!(screen.contains("Play"));
+        assert!(screen.contains("Reproducir"));
         assert_eq!(a.areas.tabs.len(), 3);
         assert!(a.areas.buttons.iter().all(|r| r.height == 3));
         assert!(a.areas.progress.width > 0 && a.areas.volume.width > 0);

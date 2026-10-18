@@ -39,14 +39,14 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
     let menu = Menu::with_items(
         app,
         &[
-            &item("main", "Show player")?,
-            &item("compact", "Mini player")?,
+            &item("main", "Mostrar reproductor")?,
+            &item("compact", "Mini reproductor")?,
             &sep()?,
-            &item("toggle", "Play / Pause")?,
-            &item("next", "Next")?,
-            &item("prev", "Previous")?,
+            &item("toggle", "Reproducir / Pausar")?,
+            &item("next", "Siguiente")?,
+            &item("prev", "Anterior")?,
             &sep()?,
-            &item("quit", "Quit")?,
+            &item("quit", "Salir")?,
         ],
     )?;
 
