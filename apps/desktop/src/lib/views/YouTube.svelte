@@ -230,15 +230,15 @@
     gap: 6px;
     padding: 18px;
     border: 0;
-    border-radius: 14px;
-    background: #18181e;
+    border-radius: var(--radius-lg);
+    background: var(--surface);
     color: inherit;
     text-align: left;
     cursor: pointer;
     transition: background 0.15s;
   }
   .top-card:hover {
-    background: #202028;
+    background: var(--surface-2);
   }
   .top-card strong {
     font-size: 24px;
@@ -253,14 +253,14 @@
     width: 104px;
     height: 104px;
     overflow: hidden;
-    background: #23232b;
+    background: var(--art-bg);
     flex: none;
   }
   .avatar {
     border-radius: 50%;
   }
   .square {
-    border-radius: 8px;
+    border-radius: var(--radius);
   }
   .avatar img,
   .square img {
@@ -283,9 +283,9 @@
     align-items: center;
     gap: 20px;
     padding: 24px;
-    border-radius: 16px;
+    border-radius: var(--radius-lg);
     overflow: hidden;
-    background: #18181e;
+    background: var(--surface);
     margin-bottom: 8px;
   }
   .artist-head::before {

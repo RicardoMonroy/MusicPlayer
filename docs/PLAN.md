@@ -29,7 +29,7 @@ Queue = mpv playlist (gapless, auto-advance for free). The UI polls player statu
 
 ## Equalizer
 
-`mp_core::eq`: Winamp's 10 bands (60 Hz–16 kHz) + preamp, ±12 dB, Winamp presets. One lavfi chain `@eq` placed before the visualizer; slider moves use `af-command` (no audio gap), falling back to a rebuild. Saved in `<config>/musicplayer/equalizer.json`, shared by GUI and TUI. Each skin draws its own EQ panel (`Skin.equalizer`). Planned: TUI EQ panel on the same API.
+`mp_core::eq`: Winamp's 10 bands (60 Hz–16 kHz) + preamp, ±12 dB, Winamp presets. One lavfi chain `@eq` placed before the visualizer; slider moves use `af-command` (no audio gap), falling back to a rebuild. Saved in `<config>/musicplayer/equalizer.json`, shared by GUI and TUI. Each skin draws its own EQ panel (`Skin.equalizer`). TUI: view 6 "Ecualizador" on the same API and config.
 
 ## Shared settings
 
@@ -38,6 +38,7 @@ Queue = mpv playlist (gapless, auto-advance for free). The UI polls player statu
 ## Views
 
 - **Full view**: mix of Dopamine (clean library, album grid), Amberol (cover-driven adaptive colors), Tauon (fast browsing, gallery). Dynamic accent color from the cover art.
+- **Global skins**: a skin is the mini player + its EQ panel + playlist theme + a `FullTheme` (colors, fonts, radii, bevels) applied as CSS variables to the whole full player, + a TUI palette id. Choice stored in `<config>/musicplayer/skin`, shared with the TUI (re-read every 2 s, `t` cycles). Skins: MusicPlayer (default), Moderno, Minimalista, Clásica (Winamp), Casete, Vinilo, iPod, Windows 95, Hacker, Análogo. Each skin may add a `hero` (280 px signature piece: spinning record, reels, LCD, tubes...) shown in the full player now-playing panel. Settings (⚙ in the sidebar): skin gallery, ReplayGain, equalizer (the active skin's panel); EQ button in the transport bar.
 - **Compact view**: small borderless window. Skin is a plugin: `skins/<name>/` with `skin.json` + Svelte component + assets.
   - Initial skins: Cassette (Kaset-like, reels spin with progress), Vinyl (record spins, tonearm moves with progress), Classic (Winamp 2-like, spectrum visualizer).
 - **Tray**: closing a window hides it to the tray. Left click toggles the mini player (Windows/macOS). Linux trays (StatusNotifierItem) only deliver menu events, so on Linux the tray menu has Mini player / Play-Pause / Next / Previous / Quit.

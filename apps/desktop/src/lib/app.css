@@ -23,9 +23,10 @@
   margin-right: auto;
 }
 .field {
-  background: #1c1c22;
-  border: 1px solid #2a2a33;
-  border-radius: 999px;
+  box-shadow: var(--sunken);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
   padding: 7px 14px;
   color: inherit;
   width: 220px;
@@ -37,10 +38,11 @@
   border-color: var(--accent-c);
 }
 .pill {
+  box-shadow: var(--raised);
   background: var(--accent-c);
-  color: #111;
+  color: var(--on-accent);
   border: 0;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   padding: 8px 16px;
   font-weight: 600;
   cursor: pointer;
@@ -49,7 +51,7 @@
 .pill.ghost {
   background: none;
   color: inherit;
-  border: 1px solid #2f2f3a;
+  border: 1px solid var(--border);
 }
 .empty {
   flex: 1;

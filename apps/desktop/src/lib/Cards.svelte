@@ -27,7 +27,7 @@
     color: inherit;
     border: 0;
     padding: 8px;
-    border-radius: 10px;
+    border-radius: var(--radius);
     text-align: left;
     display: flex;
     flex-direction: column;
@@ -36,13 +36,13 @@
     min-width: 0;
   }
   .card:hover {
-    background: #1b1b21;
+    background: var(--surface-2);
   }
   .art {
     aspect-ratio: 1;
-    border-radius: 8px;
+    border-radius: var(--radius);
     overflow: hidden;
-    background: #23232b;
+    background: var(--art-bg);
     margin-bottom: 6px;
   }
   .art.round {

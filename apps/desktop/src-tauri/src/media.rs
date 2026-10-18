@@ -73,19 +73,19 @@ pub fn spawn(app: AppHandle) {
     });
 }
 
-/// Spectrum for the skins at ~25 fps. The analyser only runs while the compact
-/// window (the only view with a visualizer) is visible.
+/// Spectrum for the skins at ~25 fps. The analyser only runs while some window
+/// (mini player or full player) is visible.
 pub fn spawn_spectrum(app: AppHandle) {
     thread::spawn(move || {
         loop {
             let visible = app
-                .get_webview_window("compact")
-                .and_then(|w| w.is_visible().ok())
-                .unwrap_or(false);
+                .webview_windows()
+                .values()
+                .any(|w| w.is_visible().unwrap_or(false));
             let player = app.state::<Player>();
             let _ = player.set_visualizer(visible);
             if let Some(bands) = player.spectrum() {
-                let _ = app.emit_to("compact", "spectrum", bands);
+                let _ = app.emit("spectrum", bands);
             }
             thread::sleep(Duration::from_millis(if visible { 40 } else { 500 }));
         }

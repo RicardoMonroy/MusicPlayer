@@ -15,7 +15,8 @@
   import Local from "$lib/views/Local.svelte";
   import YouTube from "$lib/views/YouTube.svelte";
   import { listen } from "@tauri-apps/api/event";
-  import { skins, savedSkin, chooseSkin } from "$lib/skins";
+  import { savedSkin, skinById, applyTheme, DEFAULT_SKIN, HERO_SIZE } from "$lib/skins";
+  import Settings, { type Section } from "$lib/Settings.svelte";
 
   type View = "local" | "youtube";
   const VIEW_KEY = "view";
@@ -40,9 +41,17 @@
 
   $effect(() => connect());
 
-  let skinId = $state(savedSkin().id);
-  let replaygain = $state("track");
-  invoke<string>("replaygain").then((m) => (replaygain = m));
+  let skinId = $state(DEFAULT_SKIN);
+  savedSkin().then((s) => (skinId = s.id));
+  // The skin is global: the full player takes its colors, fonts and shapes.
+  $effect(() => applyTheme(skinById(skinId).theme, player.accent));
+  let settingsOpen = $state(false);
+  let settingsSection = $state<Section>("apariencia");
+  const openSettings = (section: Section) => {
+    settingsSection = section;
+    settingsOpen = true;
+  };
+  const skin = $derived(skinById(skinId));
   $effect(() => {
     const off = listen<string>("skin", (e) => (skinId = e.payload));
     return () => {
@@ -62,7 +71,7 @@
 
 <svelte:window onkeydown={onKey} />
 
-<div class="app" style="--accent: {player.accent}">
+<div class="app">
   <nav class="side">
     <div class="brand">♫ MusicPlayer</div>
     <button class:on={view === "local"} onclick={() => (view = "local")}>
@@ -73,33 +82,10 @@
       <svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20m0 18a8 8 0 1 1 0-16 8 8 0 0 1 0 16m-2-12.5v9l6-4.5z" /></svg>
       YouTube Music
     </button>
-    <div class="skins">
-      <span>Skin del mini reproductor</span>
-      <div class="seg" role="radiogroup">
-        {#each skins as s (s.id)}
-          <button
-            role="radio"
-            aria-checked={s.id === skinId}
-            class:on={s.id === skinId}
-            onclick={() => chooseSkin(s.id)}
-          >
-            {s.name}
-          </button>
-        {/each}
-      </div>
-    </div>
-    <label class="setting">
-      <span>Volumen normalizado</span>
-      <select
-        bind:value={replaygain}
-        onchange={() => invoke("set_replaygain", { mode: replaygain })}
-        title="ReplayGain: iguala el volumen entre canciones que tengan esas etiquetas"
-      >
-        <option value="no">Desactivado</option>
-        <option value="track">Por canción</option>
-        <option value="album">Por álbum</option>
-      </select>
-    </label>
+    <button class="gear" onclick={() => openSettings("apariencia")}>
+      <svg viewBox="0 0 24 24"><path d="M19.4 13a7.5 7.5 0 0 0 0-2l2.1-1.6-2-3.5-2.5 1a7.6 7.6 0 0 0-1.7-1L15 3h-4l-.4 2.9a7.6 7.6 0 0 0-1.7 1l-2.5-1-2 3.5L6.6 11a7.5 7.5 0 0 0 0 2l-2.1 1.6 2 3.5 2.5-1c.5.4 1.1.7 1.7 1L11 21h4l.4-2.9c.6-.3 1.2-.6 1.7-1l2.5 1 2-3.5zM13 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7" /></svg>
+      Ajustes
+    </button>
     <button class="mini" onclick={() => showView("compact")}>
       <svg viewBox="0 0 24 24"><path d="M19 11h-8v6h8zm4 8V5a2 2 0 0 0-2-2H3a2 2 0 0 0-2 2v14c0 1.1.9 2 2 2h18a2 2 0 0 0 2-2m-2 0H3V5h18z" /></svg>
       Mini reproductor
@@ -127,6 +113,10 @@
         {:else}
           <p>{lyrics}</p>
         {/if}
+      </div>
+    {:else if skin.hero}
+      <div class="hero" style:width="{HERO_SIZE}px" style:height="{HERO_SIZE}px">
+        <skin.hero />
       </div>
     {:else}
       <div class="cover">
@@ -180,6 +170,9 @@
       <span>{fmtTime(player.status.duration)}</span>
     </div>
 
+    <button class="icon eq-btn" class:on={player.eq.enabled} onclick={() => openSettings("eq")} title="Ecualizador" aria-label="Ecualizador">
+      <svg viewBox="0 0 24 24"><path d="M4 18h2v-6H4zm5 0h2V6H9zm5 0h2v-9h-2zm5 0h2v-4h-2z" /></svg>
+    </button>
     <label class="volume">
       <svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9zm13.5 3A4.5 4.5 0 0 0 14 8v8a4.5 4.5 0 0 0 2.5-4" /></svg>
       <input
@@ -193,12 +186,15 @@
   </footer>
 </div>
 
+<Settings bind:open={settingsOpen} bind:section={settingsSection} {skinId} />
+
 <style>
   :global(body) {
     margin: 0;
     font-family: "Inter", system-ui, sans-serif;
-    background: #0f0f12;
-    color: #e8e8ee;
+    background: var(--bg, #0f0f12);
+    color: var(--fg, #e8e8ee);
+    font-family: var(--font, "Inter", system-ui, sans-serif);
     overflow: hidden;
   }
   :global(button) {
@@ -207,7 +203,6 @@
   }
 
   .app {
-    --fg-dim: #9a9aa8;
     --accent-c: rgb(var(--accent));
     height: 100vh;
     display: grid;
@@ -220,8 +215,8 @@
     flex-direction: column;
     gap: 4px;
     padding: 20px 12px;
-    background: #0b0b0e;
-    border-right: 1px solid #1d1d24;
+    background: var(--sidebar);
+    border-right: 1px solid var(--border);
   }
   .brand {
     font-weight: 800;
@@ -235,7 +230,7 @@
     gap: 12px;
     background: none;
     border: 0;
-    border-radius: 8px;
+    border-radius: var(--radius);
     padding: 10px 12px;
     text-align: left;
     color: var(--fg-dim);
@@ -243,71 +238,19 @@
     cursor: pointer;
   }
   .side button:hover {
-    color: #fff;
-    background: #17171d;
+    color: var(--fg);
+    background: var(--surface-2);
   }
   .side button.on {
-    color: #fff;
+    color: var(--fg);
     background: rgba(var(--accent), 0.18);
   }
   .side svg {
     width: 20px;
   }
-  .skins {
-    margin-top: auto;
-    padding: 0 4px 6px;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-  .skins > span {
-    color: var(--fg-dim);
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.8px;
-    padding-left: 8px;
-  }
-  .setting {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    padding: 6px 4px;
-  }
-  .setting span {
-    color: var(--fg-dim);
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.8px;
-    padding-left: 8px;
-  }
-  .setting select {
-    background: #17171d;
-    color: inherit;
-    border: 1px solid #2a2a33;
-    border-radius: 8px;
-    padding: 6px 8px;
-    font: inherit;
-    font-size: 13px;
-  }
-  .seg {
-    display: flex;
-    background: #17171d;
-    border-radius: 8px;
-    padding: 3px;
-  }
-  .side .seg button {
-    flex: 1;
-    justify-content: center;
-    padding: 6px 4px;
-    font-size: 12px;
-    border-radius: 6px;
-  }
-  .side .seg button.on {
-    background: rgba(var(--accent), 0.3);
-    color: #fff;
-  }
 
   .now {
+    box-shadow: var(--sunken);
     position: relative;
     overflow: hidden;
     display: flex;
@@ -316,7 +259,7 @@
     justify-content: center;
     padding: 24px;
     text-align: center;
-    background: #15151a;
+    background: var(--panel);
   }
   .backdrop {
     position: absolute;
@@ -330,9 +273,9 @@
     position: relative;
     width: 260px;
     aspect-ratio: 1;
-    border-radius: 14px;
+    border-radius: var(--radius-lg);
     overflow: hidden;
-    background: #23232b;
+    background: var(--art-bg);
     display: grid;
     place-items: center;
     box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
@@ -344,7 +287,7 @@
   }
   .cover svg {
     width: 90px;
-    fill: #3a3a46;
+    fill: var(--fg-dim);
   }
   .now h2,
   .now p {
@@ -363,6 +306,16 @@
     font-size: 14px;
   }
 
+  .side .gear {
+    margin-top: auto;
+  }
+  .hero {
+    position: relative;
+    flex: none;
+  }
+  .eq-btn.on {
+    color: rgb(var(--accent));
+  }
   .lyrics {
     position: relative;
     width: 100%;
@@ -384,27 +337,27 @@
   .lyrics-toggle {
     position: relative;
     margin-top: 14px;
-    background: rgba(255, 255, 255, 0.08);
-    border: 1px solid rgba(255, 255, 255, 0.14);
-    border-radius: 999px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-pill);
     padding: 6px 16px;
     font-size: 13px;
     cursor: pointer;
   }
   .lyrics-toggle.on {
     background: var(--accent-c);
-    color: #111;
+    color: var(--on-accent);
   }
 
   .bar {
     grid-column: 1 / -1;
     display: grid;
-    grid-template-columns: auto 1fr 180px;
+    grid-template-columns: auto 1fr auto 180px;
     align-items: center;
     gap: 28px;
     padding: 0 28px;
-    background: #121216;
-    border-top: 1px solid #22222a;
+    background: var(--sidebar);
+    border-top: 1px solid var(--border);
   }
   .buttons {
     display: flex;
@@ -412,6 +365,7 @@
     gap: 10px;
   }
   .icon {
+    box-shadow: var(--raised);
     width: 42px;
     height: 42px;
     border-radius: 50%;
@@ -422,7 +376,7 @@
     cursor: pointer;
   }
   .icon:hover {
-    background: #22222a;
+    background: var(--surface-2);
   }
   svg {
     width: 22px;
@@ -432,7 +386,7 @@
     width: 52px;
     height: 52px;
     background: var(--accent-c);
-    color: #111;
+    color: var(--on-accent);
   }
   .play:hover {
     background: var(--accent-c);
@@ -461,7 +415,7 @@
     translate: -50% 0;
     max-width: 560px;
     padding: 10px 16px;
-    border-radius: 10px;
+    border-radius: var(--radius);
     background: #3a1d22;
     color: #ffd7d7;
     border: 1px solid #6b2a33;

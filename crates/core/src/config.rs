@@ -58,3 +58,15 @@ pub fn set_equalizer(eq: &crate::eq::Equalizer) -> std::io::Result<()> {
     std::fs::create_dir_all(f.parent().unwrap())?;
     std::fs::write(f, serde_json::to_vec(eq)?)
 }
+
+/// Global skin id chosen in the desktop app (the TUI picks a matching palette).
+pub fn skin() -> Option<String> {
+    let s = std::fs::read_to_string(file("skin")?).ok()?;
+    Some(s.trim().to_string()).filter(|s| !s.is_empty())
+}
+
+pub fn set_skin(id: &str) -> std::io::Result<()> {
+    let f = file("skin").ok_or(std::io::ErrorKind::NotFound)?;
+    std::fs::create_dir_all(f.parent().unwrap())?;
+    std::fs::write(f, id)
+}

@@ -1,4 +1,6 @@
 mod app;
+mod equalizer;
+mod palette;
 mod ui;
 mod youtube;
 
@@ -27,6 +29,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut terminal = ratatui::init();
     execute!(std::io::stdout(), EnableMouseCapture)?;
     let result = run(&mut terminal, &mut app);
+    app.flush_eq();
     let _ = execute!(std::io::stdout(), DisableMouseCapture);
     ratatui::restore();
     result
@@ -99,8 +102,55 @@ fn on_key(app: &mut App, k: KeyEvent) {
         app.table.select((app.row_count() > 0).then_some(0));
         return;
     }
+    if app.tab == app::Tab::Equalizer && app.lyrics.is_none() {
+        let step = if k.modifiers.contains(KeyModifiers::SHIFT) {
+            2.0
+        } else {
+            0.5
+        };
+        let changed = match k.code {
+            KeyCode::Left => {
+                app.eq.select(-1);
+                return;
+            }
+            KeyCode::Right => {
+                app.eq.select(1);
+                return;
+            }
+            KeyCode::Up => {
+                app.eq.adjust(step);
+                true
+            }
+            KeyCode::Down => {
+                app.eq.adjust(-step);
+                true
+            }
+            KeyCode::Char('0') => {
+                app.eq.set_gain(0.0);
+                true
+            }
+            KeyCode::Char('o') => {
+                app.eq.value.enabled = !app.eq.value.enabled;
+                true
+            }
+            KeyCode::Char('p') => {
+                app.eq.cycle_preset(1);
+                true
+            }
+            KeyCode::Char('P') => {
+                app.eq.cycle_preset(-1);
+                true
+            }
+            _ => false,
+        };
+        if changed {
+            app.eq_changed();
+            return;
+        }
+    }
     let p = &app.player;
     match k.code {
+        KeyCode::Char('t') => app.cycle_palette(),
         KeyCode::Char('l') => app.toggle_lyrics(),
         KeyCode::Char('r') if matches!(app.tab, app::Tab::Youtube | app::Tab::Playlists) => {
             app.yt_query.clear();
@@ -138,7 +188,7 @@ fn on_key(app: &mut App, k: KeyEvent) {
         KeyCode::BackTab if app.search_results() => app.focus_column(-1),
         KeyCode::Tab => app.cycle_tab(1),
         KeyCode::BackTab => app.cycle_tab(-1),
-        KeyCode::Char(c @ '1'..='5') => app.set_tab(TABS[c as usize - '1' as usize]),
+        KeyCode::Char(c @ '1'..='6') => app.set_tab(TABS[c as usize - '1' as usize]),
         KeyCode::Up | KeyCode::Char('k') => app.move_selection(-1),
         KeyCode::Down | KeyCode::Char('j') => app.move_selection(1),
         KeyCode::PageUp => app.move_selection(-10),
@@ -161,6 +211,35 @@ fn ratio_at(r: ratatui::layout::Rect, x: u16) -> f64 {
 
 fn on_mouse(app: &mut App, m: MouseEvent) {
     let (x, y) = (m.column, m.row);
+    if app.tab == app::Tab::Equalizer && app.lyrics.is_none() {
+        if let Some((i, rect)) = app
+            .areas
+            .eq_bars
+            .iter()
+            .copied()
+            .enumerate()
+            .find(|(_, r)| hit(*r, x, y))
+        {
+            app.eq.selected = i;
+            match m.kind {
+                MouseEventKind::Down(MouseButton::Left)
+                | MouseEventKind::Drag(MouseButton::Left) => {
+                    app.eq.set_gain(equalizer::gain_at(rect, y))
+                }
+                MouseEventKind::ScrollUp => app.eq.adjust(0.5),
+                MouseEventKind::ScrollDown => app.eq.adjust(-0.5),
+                _ => return,
+            }
+            app.eq_changed();
+            return;
+        }
+        if let Some((i, _)) = app.areas.eq_presets.iter().find(|(_, r)| hit(*r, x, y))
+            && matches!(m.kind, MouseEventKind::Down(MouseButton::Left))
+        {
+            app.table.select(Some(*i));
+            return;
+        }
+    }
     if matches!(
         m.kind,
         MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
@@ -246,6 +325,54 @@ mod tests {
 
     fn key(app: &mut App, code: KeyCode) {
         on_key(app, KeyEvent::new(code, KeyModifiers::NONE));
+    }
+
+    #[test]
+    fn equalizer_keyboard_and_mouse_controls() {
+        let mut a = app(Vec::new());
+        key(&mut a, KeyCode::Char('6'));
+        assert_eq!(a.tab, Tab::Equalizer);
+        a.eq = equalizer::EqState::new(Default::default());
+        key(&mut a, KeyCode::Right);
+        assert_eq!(a.eq.selected, 1);
+        key(&mut a, KeyCode::Up);
+        assert_eq!(a.eq.value.gains[0], 0.5);
+        on_key(&mut a, KeyEvent::new(KeyCode::Down, KeyModifiers::SHIFT));
+        assert_eq!(a.eq.value.gains[0], -1.5);
+        key(&mut a, KeyCode::Char('0'));
+        assert_eq!(a.eq.value.gains[0], 0.0);
+        key(&mut a, KeyCode::Char('o'));
+        assert!(!a.eq.value.enabled);
+        key(&mut a, KeyCode::Char('p'));
+        assert_eq!(equalizer::matching_preset(&a.eq.value), Some(1));
+        key(&mut a, KeyCode::Char('P'));
+        assert_eq!(equalizer::matching_preset(&a.eq.value), Some(0));
+        a.areas.eq_bars = vec![ratatui::layout::Rect::new(10, 5, 5, 25)];
+        on_mouse(
+            &mut a,
+            MouseEvent {
+                kind: MouseEventKind::Drag(MouseButton::Left),
+                column: 12,
+                row: 5,
+                modifiers: KeyModifiers::NONE,
+            },
+        );
+        assert_eq!(a.eq.selected, 0);
+        assert_eq!(a.eq.value.preamp, 12.0);
+        on_mouse(
+            &mut a,
+            MouseEvent {
+                kind: MouseEventKind::ScrollDown,
+                column: 12,
+                row: 5,
+                modifiers: KeyModifiers::NONE,
+            },
+        );
+        assert_eq!(a.eq.value.preamp, 11.5);
+        a.table.select(Some(13));
+        key(&mut a, KeyCode::Enter);
+        assert_eq!(equalizer::matching_preset(&a.eq.value), Some(13));
+        assert!(a.eq.value.enabled);
     }
 
     #[test]

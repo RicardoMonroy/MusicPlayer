@@ -17,14 +17,16 @@ pub enum Tab {
     Queue,
     Youtube,
     Playlists,
+    Equalizer,
 }
 
-pub const TABS: [Tab; 5] = [
+pub const TABS: [Tab; 6] = [
     Tab::Library,
     Tab::Albums,
     Tab::Queue,
     Tab::Youtube,
     Tab::Playlists,
+    Tab::Equalizer,
 ];
 
 impl Tab {
@@ -35,6 +37,7 @@ impl Tab {
             Tab::Queue => "Cola",
             Tab::Youtube => "Buscar",
             Tab::Playlists => "Playlists",
+            Tab::Equalizer => "Ecualizador",
         }
     }
 }
@@ -48,6 +51,8 @@ pub struct Album {
 /// Screen areas from the last frame, used to map mouse clicks.
 #[derive(Default)]
 pub struct Areas {
+    pub eq_bars: Vec<Rect>,
+    pub eq_presets: Vec<(usize, Rect)>,
     pub tabs: Vec<Rect>,
     pub search: Rect,
     pub top: Rect,
@@ -96,6 +101,10 @@ impl LyricsPanel {
 }
 
 pub struct App {
+    pub palette: crate::palette::Palette,
+    skin_checked: Instant,
+    pub eq: crate::equalizer::EqState,
+    eq_dirty: Option<Instant>,
     requests: usize,
     pub account_checking: bool,
     pub started: Instant,
@@ -159,6 +168,12 @@ impl App {
             let _ = player.set_ytdl_cookies(yt.cookies_file().as_deref());
         }
         let mut app = Self {
+            palette: crate::palette::lookup(
+                mp_core::config::skin().as_deref().unwrap_or("musicplayer"),
+            ),
+            skin_checked: Instant::now(),
+            eq: crate::equalizer::EqState::new(mp_core::config::equalizer()),
+            eq_dirty: None,
             requests: 0,
             account_checking: true,
             started: Instant::now(),
@@ -198,7 +213,47 @@ impl App {
         self.status.index.is_some() && !self.status.paused
     }
 
+    pub fn cycle_palette(&mut self) {
+        self.palette = self.palette.next();
+        if let Err(e) = mp_core::config::set_skin(self.palette.id) {
+            self.notice = Some((format!("No se pudo guardar tema: {e}"), Instant::now()));
+        }
+        self.skin_checked = Instant::now();
+    }
+
+    pub fn eq_changed(&mut self) {
+        if let Err(e) = self.player.set_equalizer(&self.eq.value) {
+            self.notice = Some((
+                format!("No se pudo aplicar ecualizador: {e}"),
+                Instant::now(),
+            ));
+        }
+        self.eq_dirty = Some(Instant::now());
+    }
+
+    pub fn flush_eq(&mut self) {
+        if self.eq_dirty.take().is_some()
+            && let Err(e) = mp_core::config::set_equalizer(&self.eq.value)
+        {
+            self.notice = Some((
+                format!("No se pudo guardar ecualizador: {e}"),
+                Instant::now(),
+            ));
+        }
+    }
+
     pub fn tick(&mut self) {
+        if self.skin_checked.elapsed().as_secs() >= 2 {
+            self.palette =
+                crate::palette::lookup(mp_core::config::skin().as_deref().unwrap_or("musicplayer"));
+            self.skin_checked = Instant::now();
+        }
+        if self
+            .eq_dirty
+            .is_some_and(|t| t.elapsed().as_millis() >= 300)
+        {
+            self.flush_eq();
+        }
         self.status = self.player.status();
         let target = self.player.spectrum().filter(|_| self.is_playing());
         for (i, bar) in self.bars.iter_mut().enumerate() {
@@ -263,6 +318,7 @@ impl App {
 
     pub fn row_count(&self) -> usize {
         match self.tab {
+            Tab::Equalizer => mp_core::eq::PRESETS.len(),
             Tab::Library => self.filtered().len(),
             Tab::Albums => self.albums.len(),
             Tab::Queue => self.queue.len(),
@@ -344,6 +400,11 @@ impl App {
             return;
         };
         let (queue, start) = match self.tab {
+            Tab::Equalizer => {
+                self.eq.apply_preset(sel);
+                self.eq_changed();
+                return;
+            }
             Tab::Library => (self.filtered().into_iter().cloned().collect(), sel),
             Tab::Albums => match self.albums.get(sel) {
                 Some(a) => (a.tracks.clone(), 0),
@@ -932,8 +993,12 @@ pub mod tests {
         a.move_selection(-10);
         assert_eq!(a.table.selected(), Some(0));
         a.cycle_tab(-1);
+        assert_eq!(a.tab, Tab::Equalizer);
+        assert_eq!(a.table.selected(), Some(0), "preset list");
+        a.cycle_tab(-1);
         assert_eq!(a.tab, Tab::Playlists);
         assert_eq!(a.table.selected(), None, "empty playlists");
+        a.cycle_tab(1);
         a.cycle_tab(1);
         assert_eq!(a.tab, Tab::Library);
     }

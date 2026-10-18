@@ -8,15 +8,22 @@ use ratatui::{
 
 use crate::app::{App, TABS, Tab, fmt_time};
 
-const ACCENT: Color = Color::Rgb(255, 110, 150);
-const DIM: Color = Color::Rgb(130, 130, 145);
-const BG_SEL: Color = Color::Rgb(45, 40, 55);
-
 pub fn draw(f: &mut Frame, app: &mut App) {
+    let p = app.palette;
+    f.render_widget(
+        Block::default().style(Style::new().fg(p.text).bg(p.background)),
+        f.area(),
+    );
+    app.areas.eq_bars.clear();
+    app.areas.eq_presets.clear();
     let [content, now, help] = Layout::vertical([
         Constraint::Min(5),
         Constraint::Length(9),
-        Constraint::Length(1),
+        Constraint::Length(if app.tab == Tab::Equalizer && app.lyrics.is_none() {
+            2
+        } else {
+            1
+        }),
     ])
     .areas(f.area());
     let [sidebar, mut main] = Layout::horizontal([
@@ -44,7 +51,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
             Paragraph::new(text).block(
                 Block::bordered()
                     .title(" Buscar ")
-                    .border_style(Style::new().fg(if app.searching { ACCENT } else { DIM })),
+                    .border_style(Style::new().fg(if app.searching { p.accent } else { p.dim })),
             ),
             search,
         );
@@ -59,11 +66,13 @@ pub fn draw(f: &mut Frame, app: &mut App) {
                 app.filter,
                 if app.searching { "▏" } else { "" }
             ))
-            .fg(DIM),
+            .fg(p.dim),
             filter,
         );
     }
-    if app.search_results() && app.remote_error().is_none() {
+    if app.tab == Tab::Equalizer && app.lyrics.is_none() {
+        crate::equalizer::draw(f, app, main);
+    } else if app.search_results() && app.remote_error().is_none() {
         draw_results(f, app, main);
     } else {
         draw_list(f, app, main);
@@ -77,7 +86,7 @@ fn sidebar_width(width: u16) -> u16 {
 }
 
 fn tab_labels(width: u16) -> Vec<String> {
-    let icons = ["♫", "◉", "≡", "⌕", "♥"];
+    let icons = ["♫", "◉", "≡", "⌕", "♥", "≋"];
     TABS.iter()
         .enumerate()
         .map(|(i, tab)| {
@@ -91,6 +100,7 @@ fn tab_labels(width: u16) -> Vec<String> {
 }
 
 fn draw_sidebar(f: &mut Frame, app: &mut App, area: Rect) {
+    let p = app.palette;
     let narrow = area.width <= 6;
     f.render_widget(
         Paragraph::new(if narrow {
@@ -98,18 +108,23 @@ fn draw_sidebar(f: &mut Frame, app: &mut App, area: Rect) {
         } else {
             " ♫ MusicPlayer"
         })
-        .fg(ACCENT)
+        .fg(p.accent)
         .bold(),
         Rect::new(area.x, area.y, area.width, 1),
     );
     app.areas.tabs.clear();
-    let height = if area.height >= 18 { 3 } else { 2 };
+    let height = if area.height >= 20 { 3 } else { 2 };
     for (i, (tab, label)) in TABS.into_iter().zip(tab_labels(area.width)).enumerate() {
         let rect = Rect::new(area.x, area.y + 1 + i as u16 * height, area.width, height)
             .intersection(area);
         f.render_widget(
-            Paragraph::new(format!("\n{label}")).style(if tab == app.tab {
-                Style::new().bg(BG_SEL).fg(ACCENT).bold()
+            Paragraph::new(if area.height < 14 {
+                label
+            } else {
+                format!("\n{label}")
+            })
+            .style(if tab == app.tab {
+                Style::new().bg(p.selected).fg(p.accent).bold()
             } else {
                 Style::new()
             }),
@@ -118,11 +133,11 @@ fn draw_sidebar(f: &mut Frame, app: &mut App, area: Rect) {
         app.areas.tabs.push(rect);
     }
     let (account, color) = if app.account_checking {
-        (format!("◌ {}", spinner(app)), DIM)
+        (format!("◌ {}", spinner(app)), p.dim)
     } else if app.logged_in {
-        ("● YouTube Music".into(), Color::Green)
+        ("● YouTube Music".into(), p.cool)
     } else {
-        ("○ Sin cuenta".into(), DIM)
+        ("○ Sin cuenta".into(), p.dim)
     };
     f.render_widget(
         Paragraph::new(if narrow {
@@ -148,6 +163,7 @@ fn grid_columns(width: u16) -> usize {
 }
 
 fn draw_results(f: &mut Frame, app: &mut App, area: Rect) {
+    let p = app.palette;
     let artist = app.yt_view.artist_name.is_some();
     let titles: &[&str] = if artist {
         &["Populares", "Álbumes", "Playlists"][..app.yt_view.column_count()]
@@ -195,7 +211,7 @@ fn draw_results(f: &mut Frame, app: &mut App, area: Rect) {
         body = rest;
         app.areas.switcher = switch;
         f.render_widget(
-            Paragraph::new(format!("◀ {} ▶ · Tab", titles[app.yt_view.focus])).fg(ACCENT),
+            Paragraph::new(format!("◀ {} ▶ · Tab", titles[app.yt_view.focus])).fg(p.accent),
             switch,
         );
     }
@@ -219,7 +235,7 @@ fn draw_results(f: &mut Frame, app: &mut App, area: Rect) {
             let focused = index == app.yt_view.focus;
             let block = Block::bordered()
                 .title(format!(" {} ", titles[index]))
-                .border_style(Style::new().fg(if focused { ACCENT } else { DIM }));
+                .border_style(Style::new().fg(if focused { p.accent } else { p.dim }));
             app.areas.columns.push((index, block.inner(*rect)));
             let rows: Vec<_> = app.yt_view.columns[index]
                 .iter()
@@ -233,12 +249,12 @@ fn draw_results(f: &mut Frame, app: &mut App, area: Rect) {
                         marker.split(' ').next().unwrap_or_default()
                     };
                     let subtitle = subtitle.strip_prefix("Artista · ").unwrap_or(&subtitle);
-                    Row::new([format!("{marker} {title} — {subtitle}")]).style(stripe(i))
+                    Row::new([format!("{marker} {title} — {subtitle}")]).style(stripe(i, p))
                 })
                 .collect();
             let table = Table::new(rows, [Constraint::Fill(1)])
                 .block(block)
-                .row_highlight_style(Style::new().bg(BG_SEL).fg(ACCENT))
+                .row_highlight_style(Style::new().bg(p.selected).fg(p.accent))
                 .highlight_symbol("› ");
             let state = if focused {
                 &mut app.table
@@ -279,14 +295,12 @@ fn track_cells(track: &mp_core::Track, index: usize, playing: bool) -> [String; 
     ]
 }
 
-fn stripe(index: usize) -> Style {
-    Style::new()
-        .fg(Color::Rgb(225, 225, 230))
-        .bg(if index % 2 == 1 {
-            Color::Rgb(32, 32, 38)
-        } else {
-            Color::Rgb(23, 23, 29)
-        })
+fn stripe(index: usize, p: crate::palette::Palette) -> Style {
+    Style::new().fg(p.text).bg(if index % 2 == 1 {
+        p.zebra
+    } else {
+        p.background
+    })
 }
 
 fn lyrics_lines(text: &str, width: u16) -> Vec<String> {
@@ -309,6 +323,7 @@ fn lyrics_lines(text: &str, width: u16) -> Vec<String> {
 }
 
 fn draw_lyrics(f: &mut Frame, app: &mut App, area: Rect) {
+    let p = app.palette;
     let spin = spinner(app);
     let panel = app.lyrics.as_mut().unwrap();
     let text = if panel.loading {
@@ -321,7 +336,7 @@ fn draw_lyrics(f: &mut Frame, app: &mut App, area: Rect) {
     };
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
-        .border_style(Style::new().fg(DIM))
+        .border_style(Style::new().fg(p.dim))
         .title(format!(
             " {}Letra · {} ",
             if panel.loading {
@@ -343,6 +358,7 @@ fn draw_lyrics(f: &mut Frame, app: &mut App, area: Rect) {
 }
 
 fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
+    let p = app.palette;
     if app.lyrics.is_some() {
         draw_lyrics(f, app, area);
         return;
@@ -350,7 +366,7 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
     let playing_uri = app.now_playing().map(|t| t.uri.clone());
     let row_style = |uri: &str| {
         if Some(uri) == playing_uri.as_deref() {
-            Style::new().fg(ACCENT).bold()
+            Style::new().fg(p.accent).bold()
         } else {
             Style::new()
         }
@@ -368,7 +384,8 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
                 .enumerate()
                 .map(|(i, t)| {
                     let playing = Some(&t.uri) == playing_uri.as_ref();
-                    Row::new(track_cells(t, i, playing)).style(stripe(i).patch(row_style(&t.uri)))
+                    Row::new(track_cells(t, i, playing))
+                        .style(stripe(i, p).patch(row_style(&t.uri)))
                 })
                 .collect();
             (
@@ -407,8 +424,10 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
                         }
                     };
                     let style = match r {
-                        crate::youtube::YoutubeRow::Track(t) => stripe(i).patch(row_style(&t.uri)),
-                        _ => stripe(i),
+                        crate::youtube::YoutubeRow::Track(t) => {
+                            stripe(i, p).patch(row_style(&t.uri))
+                        }
+                        _ => stripe(i, p),
                     };
                     Row::new(cells).style(style)
                 })
@@ -439,6 +458,7 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
             )
         }
 
+        Tab::Equalizer => unreachable!("EQ renders separately"),
         Tab::Albums => {
             let rows = app
                 .albums
@@ -448,16 +468,16 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
                     let total: f64 = a.tracks.iter().filter_map(|t| t.duration).sum();
                     Row::new(vec![
                         Cell::from(a.name.clone()),
-                        Cell::from(a.artist.clone()).fg(DIM),
+                        Cell::from(a.artist.clone()).fg(p.dim),
                         Cell::from(format!(
                             "{} canci{}",
                             a.tracks.len(),
                             if a.tracks.len() == 1 { "ón" } else { "ones" }
                         ))
-                        .fg(DIM),
-                        Cell::from(fmt_time(total)).fg(DIM),
+                        .fg(p.dim),
+                        Cell::from(fmt_time(total)).fg(p.dim),
                     ])
-                    .style(stripe(i))
+                    .style(stripe(i, p))
                 })
                 .collect();
             (
@@ -485,7 +505,7 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
     );
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
-        .border_style(Style::new().fg(DIM))
+        .border_style(Style::new().fg(p.dim))
         .title(title.bold());
     app.areas.list = block.inner(area);
 
@@ -495,7 +515,7 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
         if let Some(message) = message {
             f.render_widget(
                 Paragraph::new(message.replace(['\n', '\r'], " "))
-                    .fg(if error.is_some() { Color::Red } else { DIM })
+                    .fg(if error.is_some() { p.hot } else { p.dim })
                     .block(block),
                 area,
             );
@@ -525,7 +545,7 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
         f.render_widget(
             Paragraph::new(msg)
                 .wrap(Wrap { trim: true })
-                .fg(DIM)
+                .fg(p.dim)
                 .alignment(Alignment::Center)
                 .block(block),
             area,
@@ -534,11 +554,11 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
     }
 
     let table = Table::new(rows, widths)
-        .header(header.style(Style::new().fg(DIM).add_modifier(Modifier::UNDERLINED)))
+        .header(header.style(Style::new().fg(p.dim).add_modifier(Modifier::UNDERLINED)))
         .row_highlight_style(
             Style::new()
-                .bg(BG_SEL)
-                .fg(ACCENT)
+                .bg(p.selected)
+                .fg(p.accent)
                 .remove_modifier(Modifier::DIM),
         )
         .highlight_symbol("› ")
@@ -548,10 +568,11 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
 }
 
 fn draw_now(f: &mut Frame, app: &mut App, area: Rect) {
+    let p = app.palette;
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
-        .border_style(Style::new().fg(ACCENT))
-        .title(" Reproduciendo ".bold().fg(ACCENT));
+        .border_style(Style::new().fg(p.accent))
+        .title(" Reproduciendo ".bold().fg(p.accent));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -565,17 +586,17 @@ fn draw_now(f: &mut Frame, app: &mut App, area: Rect) {
 
     let s = &app.status;
     let line = if let Some((msg, _)) = &app.notice {
-        Line::from(msg.as_str().fg(Color::Rgb(255, 120, 120)))
+        Line::from(msg.as_str().fg(p.hot))
     } else {
         match app.now_playing() {
             Some(t) => Line::from(vec![
                 Span::raw(&t.title).bold(),
-                Span::raw("  —  ").fg(DIM),
+                Span::raw("  —  ").fg(p.dim),
                 Span::raw(&t.artist),
-                Span::raw(" · ").fg(DIM),
-                Span::raw(&t.album).fg(DIM),
+                Span::raw(" · ").fg(p.dim),
+                Span::raw(&t.album).fg(p.dim),
             ]),
-            None => Line::from("Nada en reproducción — pulsa Enter en una canción".fg(DIM)),
+            None => Line::from("Nada en reproducción — pulsa Enter en una canción".fg(p.dim)),
         }
     };
     f.render_widget(Paragraph::new(line), info);
@@ -596,7 +617,7 @@ fn draw_now(f: &mut Frame, app: &mut App, area: Rect) {
         Paragraph::new(fmt_time(s.duration)).alignment(Alignment::Right),
         total,
     );
-    f.render_widget(meter(ratio, bar.width, ACCENT), bar);
+    f.render_widget(meter(ratio, bar.width, p.accent, p), bar);
     app.areas.progress = bar;
 
     // Narrow terminals get icon-only buttons so labels never get clipped.
@@ -614,7 +635,7 @@ fn draw_now(f: &mut Frame, app: &mut App, area: Rect) {
     .areas(controls);
 
     if viz.width >= 5 {
-        f.render_widget(spectrum(&app.bars, viz), viz);
+        f.render_widget(spectrum(&app.bars, viz, p), viz);
     }
 
     let playing = s.index.is_some() && !s.paused;
@@ -634,9 +655,9 @@ fn draw_now(f: &mut Frame, app: &mut App, area: Rect) {
     ];
     for (i, (r, label, primary)) in buttons.into_iter().enumerate() {
         let style = if primary {
-            Style::new().fg(Color::Black).bg(ACCENT).bold()
+            Style::new().fg(p.ink).bg(p.accent).bold()
         } else {
-            Style::new().fg(Color::White)
+            Style::new().fg(p.text)
         };
         f.render_widget(
             Paragraph::new(label)
@@ -645,7 +666,11 @@ fn draw_now(f: &mut Frame, app: &mut App, area: Rect) {
                 .block(
                     Block::bordered()
                         .border_type(BorderType::Rounded)
-                        .border_style(if primary { style } else { Style::new().fg(DIM) }),
+                        .border_style(if primary {
+                            style
+                        } else {
+                            Style::new().fg(p.dim)
+                        }),
                 ),
             r,
         );
@@ -658,16 +683,13 @@ fn draw_now(f: &mut Frame, app: &mut App, area: Rect) {
         vol_line,
     );
     let vol_bar = Rect::new(vol.x, vol.y + 1, vol.width, 1);
-    f.render_widget(
-        meter(s.volume / 100.0, vol_bar.width, Color::Rgb(120, 200, 255)),
-        vol_bar,
-    );
+    f.render_widget(meter(s.volume / 100.0, vol_bar.width, p.cool, p), vol_bar);
     app.areas.volume = vol_bar;
 }
 
 /// Vertical bars with eighth-block resolution, centred in `area`.
 /// Narrow areas merge neighbouring bands (loudest wins) so every band stays represented.
-fn spectrum(bands: &[f32], area: Rect) -> Paragraph<'static> {
+fn spectrum(bands: &[f32], area: Rect, p: crate::palette::Palette) -> Paragraph<'static> {
     const STEPS: [char; 9] = [' ', '▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
     let n = bands.len().min((area.width as usize).div_ceil(2)).max(1);
     let bars: Vec<f32> = (0..n)
@@ -691,10 +713,19 @@ fn spectrum(bands: &[f32], area: Rect) -> Paragraph<'static> {
             for (i, &v) in bars.iter().enumerate() {
                 let eighths = (v.clamp(0.0, 1.0) * (rows * 8) as f32).round() as usize;
                 let ch = STEPS[eighths.saturating_sub(floor).min(8)];
-                // Low bands warm, high bands cool, like the desktop accent.
-                let hue = i as f32 / (bars.len().max(2) - 1) as f32;
-                let color =
-                    Color::Rgb(255, (110.0 + 90.0 * hue) as u8, (150.0 + 100.0 * hue) as u8);
+                let color = if p.id == "classic" {
+                    if row == 0 {
+                        p.hot
+                    } else if row * 2 < rows {
+                        p.warm
+                    } else {
+                        p.cool
+                    }
+                } else if i * 2 < bars.len() {
+                    p.warm
+                } else {
+                    p.cool
+                };
                 spans.push(Span::raw(ch.to_string().repeat(col)).fg(color));
                 spans.push(Span::raw(" "));
             }
@@ -706,11 +737,11 @@ fn spectrum(bands: &[f32], area: Rect) -> Paragraph<'static> {
 }
 
 /// One-line bar; ratatui's Gauge leaves a gap for its centered label.
-fn meter(ratio: f64, width: u16, color: Color) -> Paragraph<'static> {
+fn meter(ratio: f64, width: u16, color: Color, p: crate::palette::Palette) -> Paragraph<'static> {
     let filled = (ratio.clamp(0.0, 1.0) * width as f64).round() as usize;
     Paragraph::new(Line::from(vec![
         Span::raw("█".repeat(filled)).fg(color),
-        Span::raw("░".repeat(width as usize - filled)).fg(BG_SEL),
+        Span::raw("░".repeat(width as usize - filled)).fg(p.selected),
     ]))
 }
 
@@ -736,7 +767,23 @@ fn help_groups(app: &App) -> Vec<(&'static str, &'static str)> {
             ("Esc", "cancelar"),
         ];
     }
+    if app.tab == Tab::Equalizer {
+        return vec![
+            ("←/→", "banda"),
+            ("↑/↓", "±0.5 dB"),
+            ("⇧", "±2"),
+            ("0", "cero"),
+            ("o", "ON/OFF"),
+            ("p/P", "preset"),
+            ("j/k", "lista"),
+            ("Enter", "aplicar"),
+            ("t", "tema"),
+            ("1-6", "vista"),
+            ("q", "salir"),
+        ];
+    }
     let mut groups = vec![
+        ("←/→", "±5 s"),
         ("Enter", "abrir/reproducir"),
         ("Espacio", "pausar"),
         ("l", "letra"),
@@ -759,8 +806,8 @@ fn help_groups(app: &App) -> Vec<(&'static str, &'static str)> {
     }
     groups.extend([
         ("/", "buscar"),
-        ("1-5", "vista"),
-        ("←/→", "±5 s"),
+        ("1-6", "vista"),
+        ("t", "tema"),
         ("+/-", "volumen"),
     ]);
     groups
@@ -784,17 +831,29 @@ fn fit_hints<'a>(groups: &[(&'a str, &'a str)], width: u16) -> Vec<(&'a str, &'a
 }
 
 fn draw_help(f: &mut Frame, app: &App, area: Rect) {
+    let p = app.palette;
     let groups = help_groups(app);
-    let spans: Vec<_> = fit_hints(&groups, area.width)
+    let chunks: Vec<_> = if area.height > 1 {
+        vec![&groups[..6], &groups[6..]]
+    } else {
+        vec![groups.as_slice()]
+    };
+    let lines: Vec<_> = chunks
         .into_iter()
-        .flat_map(|(key, label)| {
-            [
-                Span::raw(format!(" {key} ")).fg(Color::Black).bg(DIM),
-                Span::raw(format!("{label}  ")).fg(DIM),
-            ]
+        .map(|groups| {
+            let spans: Vec<_> = fit_hints(groups, area.width)
+                .into_iter()
+                .flat_map(|(key, label)| {
+                    [
+                        Span::raw(format!(" {key} ")).fg(p.ink).bg(p.dim),
+                        Span::raw(format!("{label}  ")).fg(p.dim),
+                    ]
+                })
+                .collect();
+            Line::from(spans)
         })
         .collect();
-    f.render_widget(Paragraph::new(Line::from(spans)), area);
+    f.render_widget(Paragraph::new(lines), area);
 }
 
 #[cfg(test)]
@@ -802,6 +861,39 @@ mod tests {
     use super::*;
     use crate::app::tests::{app, track};
     use ratatui::{Terminal, backend::TestBackend};
+
+    #[test]
+    fn equalizer_renders_labels_bars_and_hit_areas() {
+        for (width, height) in [(80, 24), (160, 45)] {
+            let mut a = app(Vec::new());
+            a.set_tab(Tab::Equalizer);
+            a.eq.apply_preset(13);
+            let mut term = Terminal::new(TestBackend::new(width, height)).unwrap();
+            term.draw(|f| draw(f, &mut a)).unwrap();
+            let b = term.backend().buffer();
+            let screen = (0..height)
+                .map(|y| (0..width).map(|x| b[(x, y)].symbol()).collect::<String>())
+                .collect::<Vec<_>>()
+                .join("\n");
+            for label in crate::equalizer::LABELS.into_iter().chain([
+                "+12",
+                "-12",
+                "ON",
+                "Rock",
+                "██",
+                "Preajustes",
+            ]) {
+                assert!(screen.contains(label), "missing {label}: {screen}");
+            }
+            assert_eq!(a.areas.eq_bars.len(), 11);
+            for r in &a.areas.eq_bars {
+                assert!(r.height > 1);
+                assert!((r.y..r.bottom()).any(|y| b[(r.x, y)].symbol() == "█"));
+            }
+            assert!(!a.areas.eq_presets.is_empty());
+            assert!(!screen.contains("±5 s"));
+        }
+    }
 
     #[test]
     fn artist_header_and_albums_render_at_supported_sizes() {
@@ -849,7 +941,7 @@ mod tests {
             .collect();
         assert!(screen.contains("Midnight City"));
         assert!(screen.contains("▶"));
-        assert_eq!(a.areas.tabs.len(), 5);
+        assert_eq!(a.areas.tabs.len(), 6);
         assert!(a.areas.buttons.iter().all(|r| r.height == 3));
         assert!(a.areas.progress.width > 0 && a.areas.volume.width > 0);
     }
@@ -929,7 +1021,11 @@ mod tests {
         let mut bars = [0.0; 19];
         bars[0] = 1.0;
         bars[18] = 0.5;
-        let p = spectrum(&bars, Rect::new(0, 0, 38, 3));
+        let p = spectrum(
+            &bars,
+            Rect::new(0, 0, 38, 3),
+            crate::palette::lookup("musicplayer"),
+        );
         let mut term = Terminal::new(TestBackend::new(38, 3)).unwrap();
         term.draw(|f| f.render_widget(p, f.area())).unwrap();
         let b = term.backend().buffer();
@@ -950,8 +1046,13 @@ mod tests {
         let mut bars = [0.0; 19];
         bars[18] = 1.0;
         let mut term = Terminal::new(TestBackend::new(9, 1)).unwrap();
-        term.draw(|f| f.render_widget(spectrum(&bars, f.area()), f.area()))
-            .unwrap();
+        term.draw(|f| {
+            f.render_widget(
+                spectrum(&bars, f.area(), crate::palette::lookup("musicplayer")),
+                f.area(),
+            )
+        })
+        .unwrap();
         let row: String = term
             .backend()
             .buffer()

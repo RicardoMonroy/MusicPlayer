@@ -82,7 +82,7 @@
     text-align: left;
     background: none;
     border: 0;
-    border-radius: 8px;
+    border-radius: var(--radius);
     padding: 8px 10px;
     cursor: default;
     font-size: 14px;
@@ -105,7 +105,7 @@
     flex: none;
   }
   .row:hover {
-    background: #1b1b21;
+    background: var(--surface-2);
   }
   .no,
   .dur,

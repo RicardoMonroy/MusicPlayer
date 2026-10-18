@@ -3,11 +3,12 @@
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
   import { connect, showView, player } from "$lib/player.svelte";
-  import { savedSkin, skins, skinById, chooseSkin, PLAYLIST_HEIGHT } from "$lib/skins";
+  import { savedSkin, skins, skinById, chooseSkin, DEFAULT_SKIN, PLAYLIST_HEIGHT } from "$lib/skins";
   import Playlist from "$lib/Playlist.svelte";
   import { compact } from "$lib/compact.svelte";
 
-  let skin = $state.raw(savedSkin());
+  let skin = $state.raw(skinById(DEFAULT_SKIN));
+  savedSkin().then((s) => (skin = s));
 
   let picking = $state(false);
   const win = getCurrentWindow();

@@ -94,6 +94,19 @@ fn now(app: AppHandle) -> media::Now {
 }
 
 #[tauri::command]
+fn skin() -> Option<String> {
+    mp_core::config::skin()
+}
+
+/// Remember the global skin and tell every window.
+#[tauri::command]
+fn set_skin(id: String, app: AppHandle) -> CmdResult {
+    mp_core::config::set_skin(&id).map_err(err)?;
+    let _ = app.emit("skin", &id);
+    Ok(())
+}
+
+#[tauri::command]
 fn equalizer() -> mp_core::eq::Equalizer {
     mp_core::config::equalizer()
 }
@@ -294,6 +307,8 @@ pub fn run() {
             resize_compact,
             replaygain,
             set_replaygain,
+            skin,
+            set_skin,
             equalizer,
             eq_presets,
             set_equalizer,

@@ -94,18 +94,25 @@
     width: 290px;
     height: 290px;
     border-radius: 50%;
-    background:
-      conic-gradient(
-        from 30deg,
-        transparent 0 40deg,
-        rgba(255, 255, 255, 0.09) 50deg,
-        transparent 60deg 220deg,
-        rgba(255, 255, 255, 0.07) 230deg,
-        transparent 240deg
-      ),
-      repeating-radial-gradient(#111 0 1px, #161616 1px 3px);
+    background: repeating-radial-gradient(#111 0 1px, #161616 1px 3px);
     display: grid;
     place-items: center;
+  }
+  /* The light sheen stays still like a real room light; only the record turns. */
+  .platter::after {
+    content: "";
+    position: absolute;
+    inset: 5px;
+    border-radius: 50%;
+    pointer-events: none;
+    background: conic-gradient(
+      from 30deg,
+      transparent 0 40deg,
+      rgba(255, 255, 255, 0.09) 50deg,
+      transparent 60deg 220deg,
+      rgba(255, 255, 255, 0.07) 230deg,
+      transparent 240deg
+    );
   }
   .label {
     width: 100px;
