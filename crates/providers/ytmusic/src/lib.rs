@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use mp_core::Track;
 use rustypipe::{
     client::RustyPipe,
-    model::{AlbumItem, ArtistId, MusicPlaylistItem, Thumbnail, TrackItem},
+    model::{AlbumItem, ArtistId, ArtistItem, MusicPlaylistItem, Thumbnail, TrackItem},
 };
 use serde::{Deserialize, Serialize};
 
@@ -30,9 +30,10 @@ const MAX_TRACKS: usize = 1000;
 pub enum Kind {
     Album,
     Playlist,
+    Artist,
 }
 
-/// An album or playlist shown as a card; open it to get its tracks.
+/// An album, playlist or artist shown as a card; open it to get its tracks.
 #[derive(Debug, Clone, Serialize)]
 pub struct Collection {
     pub kind: Kind,
@@ -42,8 +43,29 @@ pub struct Collection {
     pub cover: Option<String>,
 }
 
+/// The best match, shown big like YouTube Music's "Top result".
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "type", content = "item", rename_all = "lowercase")]
+pub enum Top {
+    Artist(Collection),
+    Track(Track),
+}
+
 #[derive(Debug, Default, Serialize)]
 pub struct SearchResults {
+    pub top: Option<Top>,
+    pub tracks: Vec<Track>,
+    pub videos: Vec<Track>,
+    pub artists: Vec<Collection>,
+    pub albums: Vec<Collection>,
+    pub playlists: Vec<Collection>,
+}
+
+/// An artist's page: popular tracks and discography.
+#[derive(Debug, Serialize)]
+pub struct ArtistPage {
+    pub name: String,
+    pub cover: Option<String>,
     pub tracks: Vec<Track>,
     pub albums: Vec<Collection>,
     pub playlists: Vec<Collection>,
@@ -71,14 +93,24 @@ impl YtMusic {
 
     pub async fn search(&self, query: &str) -> Result<SearchResults, Error> {
         let q = self.rp.query();
-        let (tracks, albums, featured, community) = tokio::join!(
+        let (tracks, videos, artists, albums, featured, community) = tokio::join!(
             q.music_search_tracks(query),
+            q.music_search_videos(query),
+            q.music_search_artists(query),
             q.music_search_albums(query),
             q.music_search_playlists(query, false),
             q.music_search_playlists(query, true),
         );
-        Ok(SearchResults {
+        let mut r = SearchResults {
+            top: None,
             tracks: tracks?.items.items.into_iter().map(track).collect(),
+            // Videos and artists are extras: a failure there should not hide songs.
+            videos: videos
+                .map(|v| v.items.items.into_iter().map(track).collect())
+                .unwrap_or_default(),
+            artists: artists
+                .map(|a| a.items.items.into_iter().map(artist).collect())
+                .unwrap_or_default(),
             albums: albums?.items.items.into_iter().map(album).collect(),
             playlists: featured?
                 .items
@@ -87,6 +119,23 @@ impl YtMusic {
                 .chain(community?.items.items)
                 .map(playlist)
                 .collect(),
+        };
+        r.top = top_result(query, &r);
+        Ok(r)
+    }
+
+    pub async fn artist(&self, id: &str) -> Result<ArtistPage, Error> {
+        // Full discography: people open an artist to play whole albums (~50 ms more).
+        let mut a = self.rp.query().music_artist(id, true).await?;
+        // Albums first, then EPs and singles; YouTube's order (newest first) within each.
+        a.albums
+            .sort_by_key(|x| x.album_type != rustypipe::model::AlbumType::Album);
+        Ok(ArtistPage {
+            cover: best_thumb(&a.header_image),
+            name: a.name,
+            tracks: a.tracks.into_iter().map(track).collect(),
+            albums: a.albums.into_iter().map(album).collect(),
+            playlists: a.playlists.into_iter().map(playlist).collect(),
         })
     }
 
@@ -106,6 +155,7 @@ impl YtMusic {
                     })
                     .collect())
             }
+            Kind::Artist => Ok(self.artist(id).await?.tracks),
             Kind::Playlist => {
                 let mut p = q.music_playlist(id).await?;
                 p.tracks.extend_limit(&q, MAX_TRACKS).await?;
@@ -140,7 +190,13 @@ impl YtMusic {
         let q = self.rp.query();
         let (playlists, albums) = tokio::join!(q.music_saved_playlists(), q.music_saved_albums());
         Ok(Library {
-            playlists: playlists?.items.into_iter().map(playlist).collect(),
+            // "LM" is Liked Music, which callers show through `liked()`.
+            playlists: playlists?
+                .items
+                .into_iter()
+                .filter(|p| p.id != "LM")
+                .map(playlist)
+                .collect(),
             albums: albums?.items.into_iter().map(album).collect(),
         })
     }
@@ -224,16 +280,55 @@ fn track(t: TrackItem) -> Track {
 }
 
 fn album(a: AlbumItem) -> Collection {
+    use rustypipe::model::AlbumType;
+    let kind = match a.album_type {
+        AlbumType::Ep => "EP · ",
+        AlbumType::Single => "Sencillo · ",
+        _ => "",
+    };
     Collection {
         kind: Kind::Album,
         subtitle: match a.year {
-            Some(y) => format!("{} · {y}", names(&a.artists)),
-            None => names(&a.artists),
+            Some(y) => format!("{kind}{} · {y}", names(&a.artists)),
+            None => format!("{kind}{}", names(&a.artists)),
         },
         id: a.id,
         title: a.name,
         cover: best_thumb(&a.cover),
     }
+}
+
+/// An artist whose name matches the query wins, like YouTube Music; else the first song.
+fn top_result(query: &str, r: &SearchResults) -> Option<Top> {
+    let q = query.trim().to_lowercase();
+    r.artists
+        .iter()
+        .find(|a| a.title.to_lowercase() == q)
+        .map(|a| Top::Artist(a.clone()))
+        .or_else(|| r.tracks.first().map(|t| Top::Track(t.clone())))
+}
+
+fn artist(a: ArtistItem) -> Collection {
+    Collection {
+        kind: Kind::Artist,
+        subtitle: match a.subscriber_count {
+            Some(n) => format!("Artista · {} suscriptores", compact_count(n)),
+            None => "Artista".into(),
+        },
+        cover: best_thumb(&a.avatar),
+        id: a.id,
+        title: a.name,
+    }
+}
+
+/// 1234567 -> "1.2 M", like YouTube's own counters.
+fn compact_count(n: u64) -> String {
+    match n {
+        0..1_000 => n.to_string(),
+        1_000..1_000_000 => format!("{:.1} K", n as f64 / 1e3),
+        _ => format!("{:.1} M", n as f64 / 1e6),
+    }
+    .replace(".0 ", " ")
 }
 
 fn playlist(p: MusicPlaylistItem) -> Collection {
@@ -294,6 +389,37 @@ mod tests {
         assert_eq!(pick(&[60, 544, 1200]).unwrap(), "544");
         assert_eq!(pick(&[800, 1200]).unwrap(), "800");
         assert_eq!(pick(&[]), None);
+    }
+
+    #[test]
+    fn top_result_prefers_exact_artist() {
+        let c = |t: &str| Collection {
+            kind: Kind::Artist,
+            id: t.into(),
+            title: t.into(),
+            subtitle: String::new(),
+            cover: None,
+        };
+        let t = Track {
+            title: "Song".into(),
+            artist: "X".into(),
+            album: String::new(),
+            uri: watch_url("a"),
+            track_no: None,
+            duration: None,
+            cover: None,
+        };
+        let mut r = SearchResults {
+            tracks: vec![t],
+            artists: vec![c("Opeth Tribute"), c("Opeth")],
+            ..Default::default()
+        };
+        assert!(matches!(top_result(" opeth ", &r), Some(Top::Artist(a)) if a.title == "Opeth"));
+        r.artists.pop();
+        assert!(matches!(top_result("opeth", &r), Some(Top::Track(_))));
+        assert_eq!(compact_count(950), "950");
+        assert_eq!(compact_count(1_000_000), "1 M");
+        assert_eq!(compact_count(2_340_000), "2.3 M");
     }
 
     #[test]

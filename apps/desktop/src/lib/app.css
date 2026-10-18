@@ -62,6 +62,7 @@
   padding: 24px;
 }
 .scroll {
+  position: relative; /* offsetParent for virtualized lists */
   overflow-y: auto;
   padding-right: 12px;
   padding-bottom: 16px;

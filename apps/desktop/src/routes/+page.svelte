@@ -41,6 +41,8 @@
   $effect(() => connect());
 
   let skinId = $state(savedSkin().id);
+  let replaygain = $state("track");
+  invoke<string>("replaygain").then((m) => (replaygain = m));
   $effect(() => {
     const off = listen<string>("skin", (e) => (skinId = e.payload));
     return () => {
@@ -86,6 +88,18 @@
         {/each}
       </div>
     </div>
+    <label class="setting">
+      <span>Volumen normalizado</span>
+      <select
+        bind:value={replaygain}
+        onchange={() => invoke("set_replaygain", { mode: replaygain })}
+        title="ReplayGain: iguala el volumen entre canciones que tengan esas etiquetas"
+      >
+        <option value="no">Desactivado</option>
+        <option value="track">Por canción</option>
+        <option value="album">Por álbum</option>
+      </select>
+    </label>
     <button class="mini" onclick={() => showView("compact")}>
       <svg viewBox="0 0 24 24"><path d="M19 11h-8v6h8zm4 8V5a2 2 0 0 0-2-2H3a2 2 0 0 0-2 2v14c0 1.1.9 2 2 2h18a2 2 0 0 0 2-2m-2 0H3V5h18z" /></svg>
       Mini reproductor
@@ -252,6 +266,28 @@
     text-transform: uppercase;
     letter-spacing: 0.8px;
     padding-left: 8px;
+  }
+  .setting {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 6px 4px;
+  }
+  .setting span {
+    color: var(--fg-dim);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    padding-left: 8px;
+  }
+  .setting select {
+    background: #17171d;
+    color: inherit;
+    border: 1px solid #2a2a33;
+    border-radius: 8px;
+    padding: 6px 8px;
+    font: inherit;
+    font-size: 13px;
   }
   .seg {
     display: flex;

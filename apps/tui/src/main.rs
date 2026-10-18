@@ -19,7 +19,7 @@ use ratatui::crossterm::{
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let folder = pick_folder();
-    let player = Player::new().map_err(|e| format!("libmpv failed to start: {e}"))?;
+    let player = Player::new().map_err(|e| format!("No se pudo iniciar libmpv: {e}"))?;
     // The TUI always shows the spectrum; without the needed ffmpeg filters it just stays flat.
     let _ = player.set_visualizer(true);
     let mut app = App::new(player, folder);
@@ -53,7 +53,14 @@ fn run(
         terminal.draw(|f| ui::draw(f, app))?;
         app.run_pending();
         // ~25 fps while the spectrum moves, 4 fps when idle.
-        let frame = if app.is_playing() { 40 } else { 250 };
+        let frame = if app.is_playing()
+            || app.message.is_some()
+            || app.lyrics.as_ref().is_some_and(|p| p.loading)
+        {
+            40
+        } else {
+            250
+        };
         if event::poll(Duration::from_millis(frame))? {
             match event::read()? {
                 Event::Key(k) if k.kind == KeyEventKind::Press => on_key(app, k),
@@ -75,7 +82,6 @@ fn on_key(app: &mut App, k: KeyEvent) {
         };
         match k.code {
             KeyCode::Esc => {
-                query.clear();
                 app.searching = false;
             }
             KeyCode::Enter => {
@@ -95,22 +101,41 @@ fn on_key(app: &mut App, k: KeyEvent) {
     }
     let p = &app.player;
     match k.code {
+        KeyCode::Char('l') => app.toggle_lyrics(),
+        KeyCode::Char('r') if matches!(app.tab, app::Tab::Youtube | app::Tab::Playlists) => {
+            app.yt_query.clear();
+            app.yt_view = Default::default();
+            if app.logged_in {
+                app.schedule(app::NetworkAction::Library, "Cargando biblioteca…");
+            } else {
+                app.account_checking = true;
+                app.schedule(app::NetworkAction::Account, "Comprobando cuenta…");
+            }
+        }
         KeyCode::Char('q') => app.quit = true,
         KeyCode::Char('c') if k.modifiers.contains(KeyModifiers::CONTROL) => app.quit = true,
         KeyCode::Char(' ') => drop(p.toggle_pause()),
         KeyCode::Char('n') => drop(p.next()),
+        KeyCode::Char('p')
+            if matches!(app.tab, app::Tab::Youtube | app::Tab::Playlists)
+                && app.remote_view().opened.is_some()
+                && app.lyrics.is_none() =>
+        {
+            app.play_collection()
+        }
         KeyCode::Char('p') => drop(p.prev()),
         KeyCode::Left => app.seek_by(-5.0),
         KeyCode::Right => app.seek_by(5.0),
         KeyCode::Char('+') | KeyCode::Char('=') => app.volume_by(5.0),
         KeyCode::Char('-') => app.volume_by(-5.0),
         KeyCode::Char('/') => {
-            if app.tab != app::Tab::Youtube {
-                app.set_tab(app::Tab::Library);
-            }
+            app.set_tab(app::Tab::Youtube);
             app.searching = true;
         }
         KeyCode::Esc | KeyCode::Backspace => app.back(),
+        KeyCode::Char('f') if app.tab == app::Tab::Library => app.searching = true,
+        KeyCode::Tab if app.search_results() => app.focus_column(1),
+        KeyCode::BackTab if app.search_results() => app.focus_column(-1),
         KeyCode::Tab => app.cycle_tab(1),
         KeyCode::BackTab => app.cycle_tab(-1),
         KeyCode::Char(c @ '1'..='5') => app.set_tab(TABS[c as usize - '1' as usize]),
@@ -136,12 +161,59 @@ fn ratio_at(r: ratatui::layout::Rect, x: u16) -> f64 {
 
 fn on_mouse(app: &mut App, m: MouseEvent) {
     let (x, y) = (m.column, m.row);
+    if matches!(
+        m.kind,
+        MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+    ) && let Some((column, _)) = app
+        .areas
+        .columns
+        .iter()
+        .find(|(_, r)| hit(*r, x, y))
+        .copied()
+        && column != app.yt_view.focus
+    {
+        app.focus_column(column as isize - app.yt_view.focus as isize);
+    }
     match m.kind {
         MouseEventKind::ScrollUp => app.move_selection(-3),
         MouseEventKind::ScrollDown => app.move_selection(3),
         MouseEventKind::Down(MouseButton::Left) => {
             let a = &app.areas;
-            if let Some(i) = a.tabs.iter().position(|r| hit(*r, x, y)) {
+            if hit(a.top, x, y) {
+                app.open_top();
+            } else if hit(a.switcher, x, y) {
+                let step = if x < a.switcher.x + a.switcher.width / 2 {
+                    -1
+                } else {
+                    1
+                };
+                app.focus_column(step);
+                app.searching = false;
+            } else if hit(a.search, x, y) {
+                app.searching = true;
+            } else if let Some((column, rect)) = a
+                .columns
+                .iter()
+                .find(|(_, r)| hit(r.outer(ratatui::layout::Margin::new(1, 1)), x, y))
+                .copied()
+            {
+                app.searching = false;
+                if column != app.yt_view.focus {
+                    app.focus_column(column as isize - app.yt_view.focus as isize);
+                }
+                if !hit(rect, x, y) {
+                    return;
+                }
+                let row = (y - rect.y) as usize + app.table.offset();
+                if row < app.row_count() {
+                    let double = matches!(app.last_click, Some((r, t)) if r == row && t.elapsed() < Duration::from_millis(400));
+                    app.table.select(Some(row));
+                    app.last_click = Some((row, Instant::now()));
+                    if double {
+                        app.play_selected();
+                    }
+                }
+            } else if let Some(i) = a.tabs.iter().position(|r| hit(*r, x, y)) {
                 app.set_tab(TABS[i]);
             } else if let Some(i) = a.buttons.iter().position(|r| hit(*r, x, y)) {
                 let _ = [App::prev, App::toggle, App::next][i](app);
@@ -151,7 +223,9 @@ fn on_mouse(app: &mut App, m: MouseEvent) {
                     .seek(ratio_at(a.progress, x) * app.status.duration);
             } else if hit(a.volume, x, y) {
                 let _ = app.player.set_volume(ratio_at(a.volume, x) * 100.0);
-            } else if let Some(row) = app.row_at(y) {
+            } else if hit(a.list, x, y)
+                && let Some(row) = app.row_at(y)
+            {
                 // Click selects, a second click on the same row within 400 ms plays.
                 let double = matches!(app.last_click, Some((r, t)) if r == row && t.elapsed() < Duration::from_millis(400));
                 app.table.select(Some(row));
@@ -175,6 +249,53 @@ mod tests {
     }
 
     #[test]
+    fn album_shortcut_plays_collection_and_keeps_selection() {
+        let mut a = app(Vec::new());
+        a.tab = Tab::Youtube;
+        a.yt_view.open(
+            "Disco".into(),
+            vec![
+                crate::app::tests::track("primera", "A", "B"),
+                crate::app::tests::track("segunda", "A", "B"),
+            ],
+            0,
+        );
+        a.table.select(Some(1));
+        key(&mut a, KeyCode::Char('p'));
+        assert_eq!(a.queue.len(), 2);
+        assert_eq!(a.queue[0].title, "primera");
+        assert_eq!(a.table.selected(), Some(1));
+    }
+
+    #[test]
+    fn top_artist_click_schedules_artist_open() {
+        let mut a = app(Vec::new());
+        a.tab = Tab::Youtube;
+        a.yt_view.search(mp_ytmusic::SearchResults {
+            top: Some(mp_ytmusic::Top::Artist(mp_ytmusic::Collection {
+                kind: mp_ytmusic::Kind::Artist,
+                id: "artist".into(),
+                title: "Artista".into(),
+                subtitle: String::new(),
+                cover: None,
+            })),
+            ..Default::default()
+        });
+        a.areas.top = ratatui::layout::Rect::new(6, 3, 74, 3);
+        on_mouse(
+            &mut a,
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 8,
+                row: 4,
+                modifiers: KeyModifiers::NONE,
+            },
+        );
+        assert!(matches!(a.pending, Some(NetworkAction::Open(
+            crate::youtube::YoutubeRow::Collection(ref c), _)) if c.id == "artist"));
+    }
+
+    #[test]
     fn youtube_prompt_schedules_search_without_filtering_library() {
         let mut app = app(Vec::new());
         app.filter = "local".into();
@@ -192,15 +313,34 @@ mod tests {
     }
 
     #[test]
+    fn search_focus_is_explicit_and_escape_keeps_query() {
+        let mut a = app(Vec::new());
+        key(&mut a, KeyCode::Char('/'));
+        assert_eq!(a.tab, Tab::Youtube);
+        key(&mut a, KeyCode::Char('z'));
+        key(&mut a, KeyCode::Esc);
+        key(&mut a, KeyCode::Char('z'));
+        assert_eq!(a.yt_query, "z");
+        assert!(!a.searching);
+        key(&mut a, KeyCode::Char('1'));
+        key(&mut a, KeyCode::Char('f'));
+        key(&mut a, KeyCode::Char('x'));
+        assert_eq!(a.filter, "x");
+        assert_eq!(a.yt_query, "z");
+    }
+
+    #[test]
     fn fifth_tab_defers_library_load_and_tab_click_cancels_prompt() {
         let mut app = app(Vec::new());
         key(&mut app, KeyCode::Char('/'));
         assert!(app.searching);
+        app.account_checking = false;
         app.set_tab(Tab::Playlists);
         assert!(!app.searching);
-        assert!(matches!(app.pending, Some(NetworkAction::Library)));
+        assert!(matches!(app.pending, Some(NetworkAction::Account)));
         app.pending = None;
         app.library_loaded = true;
+        app.logged_in = true;
         key(&mut app, KeyCode::Char('1'));
         key(&mut app, KeyCode::Char('5'));
         assert_eq!(app.tab, Tab::Playlists);

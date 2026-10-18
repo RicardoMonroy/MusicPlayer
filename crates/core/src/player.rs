@@ -64,6 +64,8 @@ impl Player {
             init.set_option("idle", "yes")?;
             init.set_option("gapless-audio", "weak")?;
             init.set_option("audio-display", "no")?;
+            // Even out loudness between tracks; clipping protection is mpv's default.
+            init.set_option("replaygain", crate::config::replaygain())?;
             // Streams (YouTube via yt-dlp): fetch audio only.
             init.set_option("ytdl-format", "bestaudio/best")?;
             Ok(())
@@ -93,6 +95,11 @@ impl Player {
         let value = path.map(|p| format!("cookies={}", p.display()));
         self.mpv
             .set_property("ytdl-raw-options", value.unwrap_or_default())
+    }
+
+    /// "no", "track" or "album"; applies from the next track on.
+    pub fn set_replaygain(&self, mode: &str) -> Result<(), Error> {
+        self.mpv.set_property("replaygain", mode)
     }
 
     /// Play queue entry `index` (as passed to `play_queue`).

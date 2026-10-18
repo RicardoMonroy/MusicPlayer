@@ -29,3 +29,18 @@ pub fn library_db() -> Option<PathBuf> {
             .join("library.sqlite"),
     )
 }
+
+/// ReplayGain mode for mpv: "no", "track" or "album". Defaults to "track".
+pub fn replaygain() -> String {
+    file("replaygain")
+        .and_then(|f| std::fs::read_to_string(f).ok())
+        .map(|s| s.trim().to_string())
+        .filter(|m| ["no", "track", "album"].contains(&m.as_str()))
+        .unwrap_or_else(|| "track".into())
+}
+
+pub fn set_replaygain(mode: &str) -> std::io::Result<()> {
+    let f = file("replaygain").ok_or(std::io::ErrorKind::NotFound)?;
+    std::fs::create_dir_all(f.parent().unwrap())?;
+    std::fs::write(f, mode)
+}

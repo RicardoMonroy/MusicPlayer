@@ -7,7 +7,7 @@
 <div class="cards">
   {#each items as c (c.kind + c.id)}
     <button class="card" onclick={() => onopen(c)}>
-      <div class="art">
+      <div class="art" class:round={c.kind === "artist"}>
         {#if c.cover}<img src={c.cover} alt="" loading="lazy" />{/if}
       </div>
       <span class="t">{c.title}</span>
@@ -24,6 +24,7 @@
   }
   .card {
     background: none;
+    color: inherit;
     border: 0;
     padding: 8px;
     border-radius: 10px;
@@ -43,6 +44,9 @@
     overflow: hidden;
     background: #23232b;
     margin-bottom: 6px;
+  }
+  .art.round {
+    border-radius: 50%;
   }
   .art img {
     width: 100%;

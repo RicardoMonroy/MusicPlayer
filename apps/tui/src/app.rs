@@ -33,7 +33,7 @@ impl Tab {
             Tab::Library => "Biblioteca",
             Tab::Albums => "Álbumes",
             Tab::Queue => "Cola",
-            Tab::Youtube => "YouTube",
+            Tab::Youtube => "Buscar",
             Tab::Playlists => "Playlists",
         }
     }
@@ -49,6 +49,10 @@ pub struct Album {
 #[derive(Default)]
 pub struct Areas {
     pub tabs: Vec<Rect>,
+    pub search: Rect,
+    pub top: Rect,
+    pub switcher: Rect,
+    pub columns: Vec<(usize, Rect)>,
     /// Inner area of the list table (rows start one line below, after the header).
     pub list: Rect,
     pub buttons: [Rect; 3],
@@ -57,6 +61,7 @@ pub struct Areas {
 }
 
 pub enum NetworkAction {
+    Account,
     Search,
     Library,
     Open(YoutubeRow, usize),
@@ -64,13 +69,37 @@ pub enum NetworkAction {
 
 /// A finished network request, applied on the UI thread by `tick`.
 pub enum NetworkResult {
+    Account(Result<std::sync::Arc<YtMusic>, String>, bool),
+    Lyrics(String, Option<String>),
     Search(Result<mp_ytmusic::SearchResults, String>),
+    Artist(Tab, usize, Result<mp_ytmusic::ArtistPage, String>),
     Library(bool, Result<Option<mp_ytmusic::Library>, String>),
     /// Tab that asked, title, previous selection, tracks.
     Open(Tab, String, usize, Result<Vec<Track>, String>),
 }
 
+#[derive(Default)]
+pub struct LyricsPanel {
+    pub uri: String,
+    pub title: String,
+    pub text: Option<String>,
+    pub loading: bool,
+    pub scroll: u16,
+}
+
+impl LyricsPanel {
+    pub fn move_by(&mut self, delta: isize) {
+        self.scroll = (self.scroll as isize)
+            .saturating_add(delta)
+            .clamp(0, u16::MAX as isize) as u16;
+    }
+}
+
 pub struct App {
+    requests: usize,
+    pub account_checking: bool,
+    pub started: Instant,
+    pub lyrics: Option<LyricsPanel>,
     pub runtime: Result<Runtime, String>,
     pub youtube: Result<std::sync::Arc<YtMusic>, String>,
     net: (
@@ -129,7 +158,11 @@ impl App {
         if let Ok(yt) = &youtube {
             let _ = player.set_ytdl_cookies(yt.cookies_file().as_deref());
         }
-        Self {
+        let mut app = Self {
+            requests: 0,
+            account_checking: true,
+            started: Instant::now(),
+            lyrics: None,
             runtime,
             youtube,
             net: std::sync::mpsc::channel(),
@@ -155,7 +188,10 @@ impl App {
             areas: Areas::default(),
             last_click: None,
             quit: false,
-        }
+        };
+        app.schedule(NetworkAction::Account, "Comprobando cuenta…");
+        app.run_pending();
+        app
     }
 
     pub fn is_playing(&self) -> bool {
@@ -172,6 +208,17 @@ impl App {
         }
         while let Ok(result) = self.net.1.try_recv() {
             self.apply_network(result);
+        }
+        if self.logged_in && !self.library_loaded && self.requests == 0 && self.pending.is_none() {
+            self.schedule(NetworkAction::Library, "Cargando biblioteca…");
+        }
+        if self
+            .lyrics
+            .as_ref()
+            .is_some_and(|panel| self.now_playing().is_some_and(|t| t.uri != panel.uri))
+        {
+            self.lyrics = None;
+            self.toggle_lyrics();
         }
         if let Some(t) = self
             .player
@@ -230,11 +277,23 @@ impl App {
     }
 
     pub fn set_tab(&mut self, tab: Tab) {
+        if self.search_results() {
+            self.yt_view.selections[self.yt_view.focus] = self.table;
+        }
         self.tab = tab;
+        self.lyrics = None;
         self.searching = false;
         self.last_click = None;
-        if tab == Tab::Playlists && !self.library_loaded {
-            self.schedule(NetworkAction::Library, "Cargando playlists…");
+        if matches!(tab, Tab::Youtube | Tab::Playlists) {
+            if !self.logged_in && !self.account_checking {
+                self.account_checking = true;
+                self.schedule(NetworkAction::Account, "Comprobando cuenta…");
+            } else if self.logged_in && !self.library_loaded {
+                self.schedule(NetworkAction::Library, "Cargando biblioteca…");
+            }
+        }
+        if tab == Tab::Youtube && !self.yt_view.searched && self.yt_view.opened.is_none() {
+            self.yt_view.rows = self.playlists.rows.clone();
         }
         let start = match tab {
             Tab::Queue => self.status.index.unwrap_or(0),
@@ -244,6 +303,20 @@ impl App {
         self.table.select(
             (self.row_count() > 0).then_some(start.min(self.row_count().saturating_sub(1))),
         );
+        if self.search_results() {
+            self.table = self.yt_view.selections[self.yt_view.focus];
+        }
+    }
+
+    pub fn search_results(&self) -> bool {
+        self.tab == Tab::Youtube && self.yt_view.results() && self.lyrics.is_none()
+    }
+
+    pub fn focus_column(&mut self, step: isize) {
+        self.yt_view.selections[self.yt_view.focus] = self.table;
+        self.yt_view.focus_column(step);
+        self.table = self.yt_view.selections[self.yt_view.focus];
+        self.last_click = None;
     }
 
     pub fn cycle_tab(&mut self, step: isize) {
@@ -252,6 +325,10 @@ impl App {
     }
 
     pub fn move_selection(&mut self, delta: isize) {
+        if let Some(panel) = &mut self.lyrics {
+            panel.move_by(delta);
+            return;
+        }
         let n = self.row_count();
         if n == 0 {
             return;
@@ -295,6 +372,34 @@ impl App {
         }
     }
 
+    pub fn play_collection(&mut self) {
+        if self.remote_view().opened.is_none() || self.lyrics.is_some() {
+            return;
+        }
+        let selected = self.table.selected();
+        self.table.select(Some(0));
+        self.play_selected();
+        self.table.select(selected);
+    }
+
+    pub fn open_top(&mut self) {
+        let row = match self.yt_view.top.clone() {
+            Some(mp_ytmusic::Top::Artist(c)) => YoutubeRow::Collection(c),
+            Some(mp_ytmusic::Top::Track(t)) => {
+                let uris = vec![t.uri.clone()];
+                if self.player.play_queue(&uris, 0).is_ok() {
+                    self.queue = vec![t];
+                }
+                return;
+            }
+            None => return,
+        };
+        self.schedule(
+            NetworkAction::Open(row, self.table.selected().unwrap_or(0)),
+            "Cargando artista…",
+        );
+    }
+
     pub fn remote_view(&self) -> &YoutubeView {
         if self.tab == Tab::Playlists {
             &self.playlists
@@ -321,10 +426,22 @@ impl App {
     }
 
     pub fn back(&mut self) {
+        if self.lyrics.take().is_some() {
+            return;
+        }
         if matches!(self.tab, Tab::Youtube | Tab::Playlists) {
             if let Some(selection) = self.remote_view_mut().back() {
-                self.table = TableState::default().with_selected(Some(selection));
+                self.table = if self.search_results() {
+                    self.yt_view.selections[self.yt_view.focus]
+                } else {
+                    TableState::default().with_selected(Some(selection))
+                };
+            } else if self.search_results() {
+                self.yt_view.error = None;
             } else {
+                if self.tab == Tab::Youtube && !self.yt_view.searched {
+                    self.yt_view.rows = self.playlists.rows.clone();
+                }
                 self.remote_view_mut().error = None;
                 self.table.select((self.row_count() > 0).then_some(0));
             }
@@ -336,24 +453,60 @@ impl App {
     }
 
     pub fn schedule(&mut self, action: NetworkAction, message: &str) {
+        match &action {
+            NetworkAction::Search => self.yt_view.error = None,
+            NetworkAction::Library => {
+                self.playlists.error = None;
+                self.yt_view.error = None;
+            }
+            NetworkAction::Open(..) => {
+                if self.search_results() {
+                    self.yt_view.selections[self.yt_view.focus] = self.table;
+                }
+                self.remote_view_mut().error = None;
+            }
+            NetworkAction::Account => {}
+        }
+        if matches!(self.pending, Some(NetworkAction::Account))
+            && !matches!(action, NetworkAction::Account)
+        {
+            self.account_checking = false;
+        }
         self.pending = Some(action);
         self.message = Some(message.into());
     }
 
     /// Start the queued request in the background; `tick` applies its result.
     pub fn run_pending(&mut self) {
+        if self.requests > 0 {
+            return;
+        }
         let Some(action) = self.pending.take() else {
             return;
         };
         let (Ok(runtime), Ok(yt)) = (&self.runtime, &self.youtube) else {
             self.message = None;
+            self.account_checking = false;
             return;
         };
         let (yt, tx, tab) = (yt.clone(), self.net.0.clone(), self.tab);
         let query = self.yt_query.clone();
         let err = |e: mp_ytmusic::Error| e.to_string();
+        self.requests += 1;
         runtime.spawn(async move {
             let result = match action {
+                NetworkAction::Account => {
+                    let fresh = youtube_dir().and_then(|dir| {
+                        YtMusic::new(&dir)
+                            .map(std::sync::Arc::new)
+                            .map_err(|e| e.to_string())
+                    });
+                    let logged_in = match &fresh {
+                        Ok(yt) => yt.logged_in().await,
+                        Err(_) => false,
+                    };
+                    NetworkResult::Account(fresh, logged_in)
+                }
                 NetworkAction::Search => {
                     NetworkResult::Search(yt.search(&query).await.map_err(err))
                 }
@@ -367,6 +520,13 @@ impl App {
                     NetworkResult::Library(logged_in, lib)
                 }
                 NetworkAction::Open(row, selection) => {
+                    if let YoutubeRow::Collection(c) = &row
+                        && c.kind == mp_ytmusic::Kind::Artist
+                    {
+                        let result = yt.artist(&c.id).await.map_err(err);
+                        let _ = tx.send(NetworkResult::Artist(tab, selection, result));
+                        return;
+                    }
                     let (title, tracks) = match row {
                         YoutubeRow::Collection(c) => (c.title, yt.open(&c.kind, &c.id).await),
                         YoutubeRow::Liked => ("♥ Me gusta".into(), yt.liked().await),
@@ -380,20 +540,63 @@ impl App {
     }
 
     fn apply_network(&mut self, result: NetworkResult) {
-        self.message = None;
+        if let NetworkResult::Lyrics(uri, text) = result {
+            if let Some(panel) = &mut self.lyrics
+                && panel.uri == uri
+            {
+                panel.text = text.filter(|s| !s.trim().is_empty());
+                panel.loading = false;
+            }
+            return;
+        }
+        self.requests = self.requests.saturating_sub(1);
+        if self.pending.is_none() {
+            self.message = None;
+        }
         let (tab, result) = match result {
+            NetworkResult::Lyrics(..) => unreachable!(),
+            NetworkResult::Account(yt, logged_in) => {
+                self.youtube = yt;
+                self.logged_in = logged_in;
+                self.account_checking = false;
+                self.library_loaded = false;
+                if logged_in {
+                    if let Ok(yt) = &self.youtube {
+                        let _ = self.player.set_ytdl_cookies(yt.cookies_file().as_deref());
+                    }
+                    if self.pending.is_none() {
+                        self.schedule(NetworkAction::Library, "Cargando biblioteca…");
+                    }
+                }
+                return;
+            }
             NetworkResult::Search(r) => (Tab::Youtube, r.map(|res| self.yt_view.search(res))),
             NetworkResult::Library(logged_in, r) => {
                 self.library_loaded = true;
                 self.logged_in = logged_in;
+                if logged_in && let Ok(yt) = &self.youtube {
+                    let _ = self.player.set_ytdl_cookies(yt.cookies_file().as_deref());
+                }
                 (
                     Tab::Playlists,
                     r.map(|lib| {
                         if let Some(lib) = lib {
-                            self.playlists.library(lib)
+                            self.playlists.library(lib);
+                            if !self.yt_view.searched && self.yt_view.opened.is_none() {
+                                self.yt_view.rows = self.playlists.rows.clone();
+                                self.yt_view.error = None;
+                            }
                         }
                     }),
                 )
+            }
+            NetworkResult::Artist(tab, selection, r) => {
+                let view = if tab == Tab::Playlists {
+                    &mut self.playlists
+                } else {
+                    &mut self.yt_view
+                };
+                (tab, r.map(|page| view.artist(page, selection)))
             }
             NetworkResult::Open(tab, title, selection, r) => {
                 let view = if tab == Tab::Playlists {
@@ -412,10 +615,53 @@ impl App {
         if let Err(e) = result {
             view.error = Some(format!("Error de YouTube Music: {e}").replace(['\n', '\r'], " "));
         }
-        if self.tab == tab {
-            self.table = TableState::default().with_selected((self.row_count() > 0).then_some(0));
+        if self.tab == tab
+            || (tab == Tab::Playlists && self.tab == Tab::Youtube && self.yt_query.is_empty())
+        {
+            self.table = if self.search_results() {
+                self.yt_view.selections[self.yt_view.focus]
+            } else {
+                TableState::default().with_selected((self.row_count() > 0).then_some(0))
+            };
             self.last_click = None;
         }
+    }
+
+    pub fn toggle_lyrics(&mut self) {
+        if self.lyrics.take().is_some() {
+            return;
+        }
+        let Some(track) = self.now_playing().cloned() else {
+            return;
+        };
+        self.lyrics = Some(LyricsPanel {
+            uri: track.uri.clone(),
+            title: track.title,
+            loading: true,
+            ..Default::default()
+        });
+        let Ok(runtime) = &self.runtime else {
+            self.lyrics.as_mut().unwrap().loading = false;
+            return;
+        };
+        let tx = self.net.0.clone();
+        let yt = self.youtube.as_ref().ok().cloned();
+        runtime.spawn(async move {
+            let uri = track.uri;
+            let text = if uri.starts_with("https://") {
+                match yt {
+                    Some(yt) => yt.lyrics(&uri).await.ok().flatten(),
+                    None => None,
+                }
+            } else {
+                let path = PathBuf::from(&uri);
+                tokio::task::spawn_blocking(move || mp_local::lyrics(&path))
+                    .await
+                    .ok()
+                    .flatten()
+            };
+            let _ = tx.send(NetworkResult::Lyrics(uri, text));
+        });
     }
 
     pub fn prev(&mut self) -> Result<(), mp_core::player::Error> {
@@ -442,6 +688,9 @@ impl App {
 
     /// Table row under a screen line, if any.
     pub fn row_at(&self, y: u16) -> Option<usize> {
+        if self.lyrics.is_some() || self.search_results() {
+            return None;
+        }
         let first_row = self.areas.list.y + 1;
         if y < first_row || y >= self.areas.list.bottom() {
             return None;
@@ -449,6 +698,12 @@ impl App {
         let row = self.table.offset() + (y - first_row) as usize;
         (row < self.row_count()).then_some(row)
     }
+}
+
+fn youtube_dir() -> Result<PathBuf, String> {
+    dirs::data_dir()
+        .map(|dir| dir.join("dev.ricardo.musicplayer/ytmusic"))
+        .ok_or_else(|| "No se encontró la carpeta de datos".into())
 }
 
 pub fn group_albums(tracks: &[Track]) -> Vec<Album> {
@@ -498,6 +753,136 @@ pub mod tests {
         a.library = tracks;
         a.table.select(Some(0));
         a
+    }
+
+    #[test]
+    fn artist_album_navigation_restores_tables_without_autoplay() {
+        let mut a = app(Vec::new());
+        a.tab = Tab::Youtube;
+        a.yt_view.search(mp_ytmusic::SearchResults {
+            tracks: vec![track("uno", "A", "B"), track("dos", "A", "B")],
+            ..Default::default()
+        });
+        a.table.select(Some(1));
+        *a.table.offset_mut() = 1;
+        a.yt_view.selections[0] = a.table;
+        a.apply_network(NetworkResult::Artist(
+            Tab::Youtube,
+            1,
+            Ok(crate::youtube::tests::artist_page()),
+        ));
+        assert_eq!(a.yt_view.focus, 1);
+        assert_eq!(a.table.selected(), Some(0));
+        a.move_selection(1);
+        a.play_selected();
+        assert!(matches!(a.pending, Some(NetworkAction::Open(
+            YoutubeRow::Collection(ref c), 1)) if c.kind == mp_ytmusic::Kind::Album));
+        a.pending = None;
+        a.apply_network(NetworkResult::Open(
+            Tab::Youtube,
+            "Disco completo".into(),
+            1,
+            Ok(vec![track("primera", "A", "B"), track("segunda", "A", "B")]),
+        ));
+        assert!(a.queue.is_empty());
+        assert_eq!(a.yt_view.opened.as_ref().unwrap().0, "Disco completo");
+        a.back();
+        assert_eq!(a.yt_view.focus, 1);
+        assert_eq!(a.table.selected(), Some(1));
+        a.focus_column(-1);
+        a.back();
+        assert!(a.yt_view.artist_name.is_none());
+        assert_eq!(a.yt_view.focus, 0);
+        assert_eq!(a.table.selected(), Some(1));
+        assert_eq!(a.table.offset(), 1);
+    }
+
+    #[test]
+    fn lyrics_scroll_and_result_state() {
+        let mut panel = LyricsPanel {
+            text: Some("uno\ndos\ntres".into()),
+            ..Default::default()
+        };
+        panel.move_by(100);
+        assert_eq!(panel.scroll, 100);
+        panel.move_by(-100);
+        assert_eq!(panel.scroll, 0);
+        let mut a = app(Vec::new());
+        a.lyrics = Some(LyricsPanel {
+            uri: "actual".into(),
+            loading: true,
+            ..Default::default()
+        });
+        a.apply_network(NetworkResult::Lyrics(
+            "anterior".into(),
+            Some("vieja".into()),
+        ));
+        assert!(a.lyrics.as_ref().unwrap().loading);
+        a.apply_network(NetworkResult::Lyrics("actual".into(), Some(" ".into())));
+        assert!(!a.lyrics.as_ref().unwrap().loading);
+        assert!(a.lyrics.as_ref().unwrap().text.is_none());
+        a.back();
+        assert!(a.lyrics.is_none());
+    }
+
+    #[test]
+    fn library_reaches_both_remote_tabs() {
+        let mut a = app(Vec::new());
+        a.apply_network(NetworkResult::Library(
+            true,
+            Ok(Some(mp_ytmusic::Library::default())),
+        ));
+        assert!(matches!(a.playlists.rows[0], YoutubeRow::Liked));
+        assert!(matches!(a.yt_view.rows[0], YoutubeRow::Liked));
+        a.account_checking = false;
+        a.logged_in = false;
+        a.set_tab(Tab::Youtube);
+        assert!(matches!(a.pending, Some(NetworkAction::Account)));
+    }
+
+    #[test]
+    fn columns_preserve_selection_and_return_from_artist() {
+        let mut a = app(Vec::new());
+        a.yt_view.search(mp_ytmusic::SearchResults {
+            tracks: vec![track("uno", "A", "B"), track("dos", "A", "B")],
+            artists: vec![mp_ytmusic::Collection {
+                kind: mp_ytmusic::Kind::Artist,
+                id: "artist".into(),
+                title: "Artista".into(),
+                subtitle: "10 suscriptores".into(),
+                cover: None,
+            }],
+            ..Default::default()
+        });
+        a.set_tab(Tab::Youtube);
+        a.move_selection(1);
+        a.focus_column(1);
+        assert_eq!(a.yt_view.focus, 1);
+        assert_eq!(a.table.selected(), Some(0));
+        a.play_selected();
+        assert!(
+            matches!(a.pending, Some(NetworkAction::Open(YoutubeRow::Collection(ref c), 0)) if c.kind == mp_ytmusic::Kind::Artist)
+        );
+        a.apply_network(NetworkResult::Open(
+            Tab::Youtube,
+            "Artista".into(),
+            0,
+            Ok(vec![track("popular", "A", "B")]),
+        ));
+        assert!(!a.search_results());
+        a.back();
+        assert!(a.search_results());
+        assert_eq!(a.yt_view.focus, 1);
+        assert_eq!(a.table.selected(), Some(0));
+        a.focus_column(-1);
+        assert_eq!(a.table.selected(), Some(1));
+        a.focus_column(-1);
+        assert_eq!(a.yt_view.focus, 3);
+        assert_eq!(a.table.selected(), None);
+        a.focus_column(1);
+        a.set_tab(Tab::Library);
+        a.set_tab(Tab::Youtube);
+        assert_eq!(a.table.selected(), Some(1));
     }
 
     #[test]

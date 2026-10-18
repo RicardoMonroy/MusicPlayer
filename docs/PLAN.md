@@ -38,7 +38,8 @@ Queue = mpv playlist (gapless, auto-advance for free). The UI polls player statu
   - Initial skins: Cassette (Kaset-like, reels spin with progress), Vinyl (record spins, tonearm moves with progress), Classic (Winamp 2-like, spectrum visualizer).
 - **Tray**: closing a window hides it to the tray. Left click toggles the mini player (Windows/macOS). Linux trays (StatusNotifierItem) only deliver menu events, so on Linux the tray menu has Mini player / Play-Pause / Next / Previous / Quit.
 - **Media keys**: `souvlaki` (MPRIS on Linux, SMTC on Windows, Now Playing on macOS) fed by a Rust poller that also pushes `now` events to every window.
-- **TUI (Linux first)**: `musicplayer-tui [folder]` (folder remembered in `~/.config/musicplayer/tui-folder`, default ~/Music). Tabs Library / Albums / Queue, `/` search, big clickable Prev/Play/Next buttons, clickable seek and volume bars, mouse wheel, double-click to play, key hints footer. Playlists tab comes with YouTube Music.
+- **Search (both apps)**: YouTube Music style — top result (exact artist match, else first song), songs (+ videos), artists, albums, playlists; artist page with popular tracks and discography. TUI shows them in columns (2x2 under ~100 cols, single column with switcher under ~60).
+- **TUI (Linux first)**: left sidebar (1 Biblioteca, 2 Álbumes, 3 Cola, 4 Buscar, 5 Playlists, account state); dedicated search box. `musicplayer-tui [folder]` (folder remembered in `~/.config/musicplayer/tui-folder`, default ~/Music). Tabs Library / Albums / Queue, `/` search, big clickable Prev/Play/Next buttons, clickable seek and volume bars, mouse wheel, double-click to play, key hints footer. Playlists tab comes with YouTube Music.
 
 ## Streaming services — real constraints
 
@@ -54,7 +55,7 @@ Queue = mpv playlist (gapless, auto-advance for free). The UI polls player statu
 3. **M2 compact + skins**: compact window, skin system, Cassette/Vinyl/Classic, tray popup, media keys.
 4. **M3 TUI**: ratatui client on the same core.
 5. **M4 YouTube Music**: search, library, playlists, playback.
-6. **M5 polish**: done — skipped-track notices (mpv end-file errors), shared music folder, SQLite tag cache, lyrics (YouTube Music + embedded/.lrc), MPRIS cover art, non-blocking TUI network, responsive TUI buttons, PKGBUILD + release workflow (see packaging/README.md). Real visualizer: 19-band lavfi analyser (`Player::set_visualizer`/`spectrum`), on only while the compact window is visible or the TUI runs; bars run a few hundred ms ahead of the audio (see docs/spikes/visualizer.md). Pending — ReplayGain, list virtualization, real-device sync check on Windows/macOS.
+6. **M5 polish**: done — skipped-track notices (mpv end-file errors), shared music folder, SQLite tag cache, lyrics (YouTube Music + embedded/.lrc), MPRIS cover art, non-blocking TUI network, responsive TUI buttons, PKGBUILD + release workflow (see packaging/README.md). Real visualizer: 19-band lavfi analyser (`Player::set_visualizer`/`spectrum`), on only while the compact window is visible or the TUI runs; bars run a few hundred ms ahead of the audio (see docs/spikes/visualizer.md). ReplayGain (`<config>/musicplayer/replaygain`: no|track|album, default track, selector in the sidebar). Track lists render only visible rows past 200 tracks. Pending — real-device visualizer sync check on Windows/macOS.
 7. **M6 Qobuz**, then Amazon decision.
 
 ## Delegation to Codex (candidates)
