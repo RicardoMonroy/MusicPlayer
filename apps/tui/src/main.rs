@@ -30,19 +30,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     result
 }
 
-/// Folder from the first argument, else the last one used, else ~/Music.
+/// Folder from the first argument (remembered), else the shared setting, else ~/Music.
 fn pick_folder() -> PathBuf {
-    let file = app::folder_file();
     if let Some(arg) = std::env::args_os().nth(1) {
         let folder = std::path::absolute(PathBuf::from(arg)).unwrap_or_default();
-        if let Some(f) = &file {
-            let _ = std::fs::create_dir_all(f.parent().unwrap());
-            let _ = std::fs::write(f, folder.to_string_lossy().as_bytes());
-        }
+        let _ = mp_core::config::set_music_folder(&folder);
         return folder;
     }
-    file.and_then(|f| std::fs::read_to_string(f).ok())
-        .map(|s| PathBuf::from(s.trim()))
+    mp_core::config::music_folder()
         .or_else(dirs::audio_dir)
         .unwrap_or_else(|| PathBuf::from("."))
 }
@@ -54,10 +49,7 @@ fn run(
     while !app.quit {
         app.tick();
         terminal.draw(|f| ui::draw(f, app))?;
-        if app.pending.is_some() {
-            app.run_pending();
-            continue;
-        }
+        app.run_pending();
         if event::poll(Duration::from_millis(250))? {
             match event::read()? {
                 Event::Key(k) if k.kind == KeyEventKind::Press => on_key(app, k),

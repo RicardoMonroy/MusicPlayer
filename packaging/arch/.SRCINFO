@@ -1,0 +1,23 @@
+pkgbase = musicplayer
+	pkgdesc = Cross-platform music player with desktop and terminal interfaces
+	pkgver = 0.1.0
+	pkgrel = 1
+	url = https://github.com/RicardoMonroy/MusicPlayer
+	arch = x86_64
+	arch = aarch64
+	license = GPL-3.0-or-later
+	makedepends = rust
+	makedepends = cargo
+	makedepends = bun
+	makedepends = git
+	depends = mpv
+	depends = yt-dlp
+	depends = webkit2gtk-4.1
+	depends = gtk3
+	depends = libayatana-appindicator
+	depends = dbus
+	depends = openssl
+	source = git+https://github.com/RicardoMonroy/MusicPlayer.git#tag=v0.1.0
+	sha256sums = SKIP
+
+pkgname = musicplayer

@@ -1,0 +1,105 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            bundles: deb,appimage
+          - os: windows-latest
+            bundles: nsis
+          - os: macos-latest
+            bundles: dmg
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check release version
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json, os, tomllib
+          from pathlib import Path
+          version = os.environ['GITHUB_REF_NAME'].removeprefix('v')
+          assert tomllib.loads(Path('Cargo.toml').read_text())['workspace']['package']['version'] == version
+          assert json.loads(Path('apps/desktop/package.json').read_text())['version'] == version
+          assert json.loads(Path('apps/desktop/src-tauri/tauri.conf.json').read_text())['version'] == version
+          PY
+
+      - name: Linux deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libmpv-dev libdbus-1-dev
+
+      - name: macOS deps
+        if: runner.os == 'macOS'
+        run: |
+          brew install mpv
+          echo "LIBRARY_PATH=$(brew --prefix)/lib" >> "$GITHUB_ENV"
+
+      - name: Windows deps
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download -R shinchiro/mpv-winbuild-cmake -p 'mpv-dev-x86_64-2*.7z' -O packaging/mpv.7z
+          7z x packaging/mpv.7z -opackaging/mpv-dev > /dev/null
+          cp packaging/mpv-dev/libmpv.dll.a packaging/mpv-dev/mpv.lib
+          echo "LIB=$(cygpath -w "$PWD/packaging/mpv-dev");$LIB" >> "$GITHUB_ENV"
+          cygpath -w "$PWD/packaging/mpv-dev" >> "$GITHUB_PATH"
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          dll = Path('packaging/mpv-dev/libmpv-2.dll').resolve()
+          assert dll.is_file(), dll
+          Path('packaging/tauri.windows.json').write_text(json.dumps({
+              'bundle': {'resources': {str(dll): 'libmpv-2.dll'}}
+          }))
+          PY
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Install frontend dependencies
+        working-directory: apps/desktop
+        run: bun install --frozen-lockfile
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          projectPath: apps/desktop
+          tauriScript: bun run tauri
+          args: --bundles ${{ matrix.bundles }} ${{ runner.os == 'Windows' && '--config ../../packaging/tauri.windows.json' || '' }} -- --locked
+          tagName: ${{ github.ref_name }}
+          releaseName: MusicPlayer ${{ github.ref_name }}
+          releaseBody: |
+            Desktop installers and Linux x86_64 TUI. See packaging/README.md at this tag for runtime dependencies and known gaps.
+            yt-dlp must be on PATH on every OS. macOS currently requires Homebrew mpv; the app is not self-contained.
+          releaseDraft: true
+          prerelease: false
+
+      - name: Package Linux TUI
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cargo build --release --locked -p musicplayer-tui
+          artifact="musicplayer-tui-${GITHUB_REF_NAME}-linux-x86_64"
+          mkdir -p "packaging/$artifact"
+          cp target/release/musicplayer-tui LICENSE packaging/README.md "packaging/$artifact/"
+          tar -czf "packaging/$artifact.tar.gz" -C packaging "$artifact"
+          gh release upload "$GITHUB_REF_NAME" "packaging/$artifact.tar.gz" --clobber

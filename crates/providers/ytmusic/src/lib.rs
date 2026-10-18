@@ -151,6 +151,24 @@ impl YtMusic {
         p.tracks.extend_limit(&q, MAX_TRACKS).await?;
         Ok(p.tracks.items.into_iter().map(track).collect())
     }
+
+    pub async fn lyrics(&self, uri: &str) -> Result<Option<String>, Error> {
+        let Some(id) = video_id(uri) else {
+            return Ok(None);
+        };
+        let q = self.rp.query();
+        let details = q.music_details(id).await?;
+        match details.lyrics_id {
+            Some(id) => Ok(Some(q.music_lyrics(id).await?.body)),
+            None => Ok(None),
+        }
+    }
+}
+
+fn video_id(uri: &str) -> Option<&str> {
+    uri.strip_prefix("https://music.youtube.com/watch?v=")
+        .map(|query| query.split(['&', '#']).next().unwrap_or_default())
+        .filter(|id| !id.is_empty())
 }
 
 pub fn watch_url(video_id: &str) -> String {
@@ -231,6 +249,41 @@ fn playlist(p: MusicPlaylistItem) -> Collection {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn extracts_video_id() {
+        assert_eq!(
+            video_id("https://music.youtube.com/watch?v=abc123"),
+            Some("abc123")
+        );
+        assert_eq!(
+            video_id("https://music.youtube.com/watch?v=abc123&list=playlist&index=2"),
+            Some("abc123")
+        );
+        assert_eq!(
+            video_id("https://music.youtube.com/watch?v=abc123#lyrics"),
+            Some("abc123")
+        );
+        assert_eq!(video_id("https://example.com/watch?v=abc123"), None);
+        assert_eq!(video_id("/home/user/Music/song.flac"), None);
+        assert_eq!(video_id("https://music.youtube.com/watch?v="), None);
+        assert_eq!(
+            video_id("https://music.youtube.com/watch?v=&list=playlist"),
+            None
+        );
+    }
+
+    /// Hits the network; run with `cargo test -p mp-ytmusic -- --ignored`.
+    #[tokio::test]
+    #[ignore]
+    async fn fetches_lyrics() {
+        let dir = std::env::temp_dir().join("mp-ytmusic-lyrics-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let yt = YtMusic::new(&dir).unwrap();
+        let lyrics = yt.lyrics(&watch_url("fJ9rUzIMcZQ")).await.unwrap().unwrap();
+        assert!(!lyrics.is_empty());
+        assert!(lyrics.contains('\n'));
+    }
 
     #[test]
     fn picks_card_sized_thumbnail() {

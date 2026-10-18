@@ -62,14 +62,28 @@ pub enum NetworkAction {
     Open(YoutubeRow, usize),
 }
 
+/// A finished network request, applied on the UI thread by `tick`.
+pub enum NetworkResult {
+    Search(Result<mp_ytmusic::SearchResults, String>),
+    Library(bool, Result<Option<mp_ytmusic::Library>, String>),
+    /// Tab that asked, title, previous selection, tracks.
+    Open(Tab, String, usize, Result<Vec<Track>, String>),
+}
+
 pub struct App {
     pub runtime: Result<Runtime, String>,
-    pub youtube: Result<YtMusic, String>,
+    pub youtube: Result<std::sync::Arc<YtMusic>, String>,
+    net: (
+        std::sync::mpsc::Sender<NetworkResult>,
+        std::sync::mpsc::Receiver<NetworkResult>,
+    ),
     pub yt_view: YoutubeView,
     pub playlists: YoutubeView,
     pub yt_query: String,
     pub pending: Option<NetworkAction>,
     pub message: Option<String>,
+    /// Short-lived warning in the now-playing panel, e.g. a track that failed to load.
+    pub notice: Option<(String, Instant)>,
     pub library_loaded: bool,
     pub logged_in: bool,
     pub player: Player,
@@ -90,7 +104,10 @@ pub struct App {
 
 impl App {
     pub fn new(player: Player, folder: PathBuf) -> Self {
-        let library = mp_local::scan(&folder);
+        let library = match mp_core::config::library_db() {
+            Some(db) => mp_local::scan_cached(&folder, &db),
+            None => mp_local::scan(&folder),
+        };
         let albums = group_albums(&library);
         let mut table = TableState::default();
         table.select((!library.is_empty()).then_some(0));
@@ -102,7 +119,9 @@ impl App {
                 .join("ytmusic");
             std::fs::create_dir_all(&dir)
                 .map_err(|e| format!("No se pudo crear la carpeta: {e}"))?;
-            YtMusic::new(&dir).map_err(|e| format!("No se pudo iniciar YouTube Music: {e}"))
+            YtMusic::new(&dir)
+                .map(std::sync::Arc::new)
+                .map_err(|e| format!("No se pudo iniciar YouTube Music: {e}"))
         })();
         // Login is done in the desktop app; reuse its cookies so sign-in-only tracks stream.
         if let Ok(yt) = &youtube {
@@ -111,11 +130,13 @@ impl App {
         Self {
             runtime,
             youtube,
+            net: std::sync::mpsc::channel(),
             yt_view: YoutubeView::default(),
             playlists: YoutubeView::default(),
             yt_query: String::new(),
             pending: None,
             message: None,
+            notice: None,
             library_loaded: false,
             logged_in: false,
             player,
@@ -136,6 +157,30 @@ impl App {
 
     pub fn tick(&mut self) {
         self.status = self.player.status();
+        while let Ok(result) = self.net.1.try_recv() {
+            self.apply_network(result);
+        }
+        if let Some(t) = self
+            .player
+            .take_failures()
+            .last()
+            .and_then(|&i| self.queue.get(i))
+        {
+            self.notice = Some((
+                format!(
+                    "No se pudo reproducir “{}”; se saltó. ¿Requiere iniciar sesión?",
+                    t.title
+                ),
+                Instant::now(),
+            ));
+        }
+        if self
+            .notice
+            .as_ref()
+            .is_some_and(|(_, at)| at.elapsed().as_secs() >= 8)
+        {
+            self.notice = None;
+        }
     }
 
     pub fn now_playing(&self) -> Option<&Track> {
@@ -282,47 +327,82 @@ impl App {
         self.message = Some(message.into());
     }
 
+    /// Start the queued request in the background; `tick` applies its result.
     pub fn run_pending(&mut self) {
         let Some(action) = self.pending.take() else {
             return;
         };
-        self.message = None;
         let (Ok(runtime), Ok(yt)) = (&self.runtime, &self.youtube) else {
+            self.message = None;
             return;
         };
-        // shortcut: blocking network calls freeze input for ~1-2 s; move to a worker thread if it bothers
-        let result = match action {
-            NetworkAction::Search => runtime
-                .block_on(yt.search(&self.yt_query))
-                .map(|results| self.yt_view.search(results)),
-            NetworkAction::Library => {
-                self.library_loaded = true;
-                self.logged_in = runtime.block_on(yt.logged_in());
-                if self.logged_in {
-                    runtime
-                        .block_on(yt.library())
-                        .map(|library| self.playlists.library(library))
-                } else {
-                    Ok(())
+        let (yt, tx, tab) = (yt.clone(), self.net.0.clone(), self.tab);
+        let query = self.yt_query.clone();
+        let err = |e: mp_ytmusic::Error| e.to_string();
+        runtime.spawn(async move {
+            let result = match action {
+                NetworkAction::Search => {
+                    NetworkResult::Search(yt.search(&query).await.map_err(err))
                 }
+                NetworkAction::Library => {
+                    let logged_in = yt.logged_in().await;
+                    let lib = if logged_in {
+                        yt.library().await.map(Some).map_err(err)
+                    } else {
+                        Ok(None)
+                    };
+                    NetworkResult::Library(logged_in, lib)
+                }
+                NetworkAction::Open(row, selection) => {
+                    let (title, tracks) = match row {
+                        YoutubeRow::Collection(c) => (c.title, yt.open(&c.kind, &c.id).await),
+                        YoutubeRow::Liked => ("♥ Me gusta".into(), yt.liked().await),
+                        YoutubeRow::Track(_) => return,
+                    };
+                    NetworkResult::Open(tab, title, selection, tracks.map_err(err))
+                }
+            };
+            let _ = tx.send(result);
+        });
+    }
+
+    fn apply_network(&mut self, result: NetworkResult) {
+        self.message = None;
+        let (tab, result) = match result {
+            NetworkResult::Search(r) => (Tab::Youtube, r.map(|res| self.yt_view.search(res))),
+            NetworkResult::Library(logged_in, r) => {
+                self.library_loaded = true;
+                self.logged_in = logged_in;
+                (
+                    Tab::Playlists,
+                    r.map(|lib| {
+                        if let Some(lib) = lib {
+                            self.playlists.library(lib)
+                        }
+                    }),
+                )
             }
-            NetworkAction::Open(row, selection) => {
-                let (title, result) = match row {
-                    YoutubeRow::Collection(c) => {
-                        (c.title, runtime.block_on(yt.open(&c.kind, &c.id)))
-                    }
-                    YoutubeRow::Liked => ("♥ Me gusta".into(), runtime.block_on(yt.liked())),
-                    YoutubeRow::Track(_) => return,
+            NetworkResult::Open(tab, title, selection, r) => {
+                let view = if tab == Tab::Playlists {
+                    &mut self.playlists
+                } else {
+                    &mut self.yt_view
                 };
-                result.map(|tracks| self.remote_view_mut().open(title, tracks, selection))
+                (tab, r.map(|tracks| view.open(title, tracks, selection)))
             }
         };
+        let view = if tab == Tab::Playlists {
+            &mut self.playlists
+        } else {
+            &mut self.yt_view
+        };
         if let Err(e) = result {
-            self.remote_view_mut().error =
-                Some(format!("Error de YouTube Music: {e}").replace(['\n', '\r'], " "));
+            view.error = Some(format!("Error de YouTube Music: {e}").replace(['\n', '\r'], " "));
         }
-        self.table = TableState::default().with_selected((self.row_count() > 0).then_some(0));
-        self.last_click = None;
+        if self.tab == tab {
+            self.table = TableState::default().with_selected((self.row_count() > 0).then_some(0));
+            self.last_click = None;
+        }
     }
 
     pub fn prev(&mut self) -> Result<(), mp_core::player::Error> {
@@ -380,11 +460,6 @@ pub fn fmt_time(s: f64) -> String {
     }
     let s = s as u64;
     format!("{}:{:02}", s / 60, s % 60)
-}
-
-/// Where the library folder is remembered between runs.
-pub fn folder_file() -> Option<PathBuf> {
-    Some(dirs::config_dir()?.join("musicplayer").join("tui-folder"))
 }
 
 #[cfg(test)]

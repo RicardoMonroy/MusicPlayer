@@ -267,15 +267,19 @@ fn draw_now(f: &mut Frame, app: &mut App, area: Rect) {
     .areas(inner.inner(ratatui::layout::Margin::new(1, 0)));
 
     let s = &app.status;
-    let line = match app.now_playing() {
-        Some(t) => Line::from(vec![
-            Span::raw(&t.title).bold(),
-            Span::raw("  —  ").fg(DIM),
-            Span::raw(&t.artist),
-            Span::raw(" · ").fg(DIM),
-            Span::raw(&t.album).fg(DIM),
-        ]),
-        None => Line::from("Nada en reproducción — pulsa Enter en una canción".fg(DIM)),
+    let line = if let Some((msg, _)) = &app.notice {
+        Line::from(msg.as_str().fg(Color::Rgb(255, 120, 120)))
+    } else {
+        match app.now_playing() {
+            Some(t) => Line::from(vec![
+                Span::raw(&t.title).bold(),
+                Span::raw("  —  ").fg(DIM),
+                Span::raw(&t.artist),
+                Span::raw(" · ").fg(DIM),
+                Span::raw(&t.album).fg(DIM),
+            ]),
+            None => Line::from("Nada en reproducción — pulsa Enter en una canción".fg(DIM)),
+        }
     };
     f.render_widget(Paragraph::new(line), info);
 
@@ -298,30 +302,34 @@ fn draw_now(f: &mut Frame, app: &mut App, area: Rect) {
     f.render_widget(meter(ratio, bar.width, ACCENT), bar);
     app.areas.progress = bar;
 
+    // Narrow terminals get icon-only buttons so labels never get clipped.
+    let narrow = controls.width < 96;
+    let (bw, pw) = if narrow { (9, 11) } else { (16, 18) };
     let [b0, b1, b2, _, vol_label, vol] = Layout::horizontal([
-        Constraint::Length(16),
-        Constraint::Length(18),
-        Constraint::Length(16),
+        Constraint::Length(bw),
+        Constraint::Length(pw),
+        Constraint::Length(bw),
         Constraint::Fill(1),
         Constraint::Length(10),
-        Constraint::Length(24),
+        Constraint::Max(24),
     ])
     .spacing(1)
     .areas(controls);
 
     let playing = s.index.is_some() && !s.paused;
+    let pick = |full: &'static str, icon: &'static str| if narrow { icon } else { full };
     let buttons = [
-        (b0, "⏮  Anterior", false),
+        (b0, pick("⏮  Anterior", "⏮"), false),
         (
             b1,
             if playing {
-                "⏸  Pausar"
+                pick("⏸  Pausar", "⏸")
             } else {
-                "▶  Reproducir"
+                pick("▶  Reproducir", "▶")
             },
             true,
         ),
-        (b2, "Siguiente  ⏭", false),
+        (b2, pick("Siguiente  ⏭", "⏭"), false),
     ];
     for (i, (r, label, primary)) in buttons.into_iter().enumerate() {
         let style = if primary {

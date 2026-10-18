@@ -1,5 +1,6 @@
 <script lang="ts">
   import "$lib/app.css";
+  import { invoke } from "@tauri-apps/api/core";
   import {
     player,
     togglePause,
@@ -20,6 +21,20 @@
   let dragPos = $state<number | null>(null);
 
   const track = $derived(player.track);
+  let showLyrics = $state(false);
+  let lyrics = $state<string | null | undefined>(undefined);
+
+  // Fetch lyrics for the current track only while the panel is open.
+  $effect(() => {
+    const t = player.track;
+    lyrics = undefined;
+    if (!showLyrics || !t) return;
+    let stale = false;
+    invoke<string | null>("lyrics", { track: $state.snapshot(t) })
+      .then((l) => !stale && (lyrics = l))
+      .catch(() => !stale && (lyrics = null));
+    return () => (stale = true);
+  });
 
   $effect(() => connect());
   $effect(() => localStorage.setItem(VIEW_KEY, view));
@@ -62,16 +77,35 @@
     {#if player.coverUrl}
       <div class="backdrop" style="background-image: url({player.coverUrl})"></div>
     {/if}
-    <div class="cover">
-      {#if player.coverUrl}
-        <img src={player.coverUrl} alt="" />
-      {:else}
-        <svg viewBox="0 0 24 24"><path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3z" /></svg>
-      {/if}
-    </div>
+    {#if showLyrics}
+      <div class="lyrics">
+        {#if !track}
+          <p class="dim">Nada en reproducción.</p>
+        {:else if lyrics === undefined}
+          <p class="dim">Buscando la letra…</p>
+        {:else if lyrics === null}
+          <p class="dim">No hay letra para esta canción.</p>
+        {:else}
+          <p>{lyrics}</p>
+        {/if}
+      </div>
+    {:else}
+      <div class="cover">
+        {#if player.coverUrl}
+          <img src={player.coverUrl} alt="" />
+        {:else}
+          <svg viewBox="0 0 24 24"><path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3z" /></svg>
+        {/if}
+      </div>
+    {/if}
     <h2>{track?.title ?? "Nada en reproducción"}</h2>
     <p>{track ? `${track.artist} · ${track.album}` : "Haz doble clic en una canción"}</p>
+    <button class="lyrics-toggle" class:on={showLyrics} onclick={() => (showLyrics = !showLyrics)}>
+      {showLyrics ? "Portada" : "Letra"}
+    </button>
   </aside>
+
+  {#if player.notice}<div class="toast" role="status">{player.notice}</div>{/if}
 
   <footer class="bar">
     <div class="buttons">
@@ -240,6 +274,39 @@
     font-size: 14px;
   }
 
+  .lyrics {
+    position: relative;
+    width: 100%;
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    text-align: center;
+    mask-image: linear-gradient(transparent, #000 8%, #000 92%, transparent);
+  }
+  .lyrics p {
+    white-space: pre-line;
+    font-size: 15px;
+    line-height: 1.7;
+    margin: 24px 0;
+  }
+  .lyrics .dim {
+    color: var(--fg-dim);
+  }
+  .lyrics-toggle {
+    position: relative;
+    margin-top: 14px;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 999px;
+    padding: 6px 16px;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .lyrics-toggle.on {
+    background: var(--accent-c);
+    color: #111;
+  }
+
   .bar {
     grid-column: 1 / -1;
     display: grid;
@@ -297,5 +364,20 @@
   input[type="range"] {
     flex: 1;
     accent-color: var(--accent-c);
+  }
+  .toast {
+    position: fixed;
+    left: 50%;
+    bottom: 100px;
+    translate: -50% 0;
+    max-width: 560px;
+    padding: 10px 16px;
+    border-radius: 10px;
+    background: #3a1d22;
+    color: #ffd7d7;
+    border: 1px solid #6b2a33;
+    font: 13px/1.4 system-ui, sans-serif;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+    z-index: 10;
   }
 </style>

@@ -1,6 +1,6 @@
 # Plan — MusicPlayer
 
-Status: stack approved 2026-10-18. M0–M3 done, M4 in progress. License: GPL-3.0-or-later (rustypipe and libmpv are GPL).
+Status: stack approved 2026-10-18. M0–M4 done, M5 in progress. License: GPL-3.0-or-later (rustypipe and libmpv are GPL).
 
 ## Stack
 
@@ -8,7 +8,7 @@ Status: stack approved 2026-10-18. M0–M3 done, M4 in progress. License: GPL-3.
 |---|---|---|
 | Core | Rust workspace | One engine shared by GUI and TUI. |
 | Playback | libmpv (`libmpv2` crate) | Plays mp3/flac/ogg/opus/m4a/wav, gapless, ReplayGain, and YouTube streams through yt-dlp. Available on all three OS. |
-| Tags/library | `lofty` (+ SQLite cache later) | Fast tag reading, covers. M1 rescans the folder on start; add SQLite when big libraries make startup slow. |
+| Tags/library | `lofty` + SQLite cache (`rusqlite`, bundled) | Tags re-read only for new/changed files (mtime+size). Cache at `<cache>/musicplayer/library.sqlite`, safe to delete. |
 | Desktop UI | Tauri v2 + Svelte + TypeScript | Skins are HTML/CSS/Canvas: easy cassette, vinyl and Winamp looks. Small binaries. |
 | Tray / media keys | Tauri tray + popup window; `souvlaki` (MPRIS on Linux, SMTC on Windows, Now Playing on macOS) | Native controls everywhere. |
 | TUI | `ratatui` + `crossterm` | Same core, large mouse-clickable controls. |
@@ -26,6 +26,10 @@ apps/tui            ratatui client
 ```
 
 Queue = mpv playlist (gapless, auto-advance for free). The UI polls player status ~4x/s. Sources will implement one `Provider` trait (add it with the second provider): `search`, `browse`, `resolve_stream(track) -> url/path`. The player only sees a URL or a path.
+
+## Shared settings
+
+`<config>/musicplayer/music-folder` (`mp_core::config`) is the local music folder for both apps; the TUI's CLI arg updates it.
 
 ## Views
 
@@ -50,7 +54,7 @@ Queue = mpv playlist (gapless, auto-advance for free). The UI polls player statu
 3. **M2 compact + skins**: compact window, skin system, Cassette/Vinyl/Classic, tray popup, media keys.
 4. **M3 TUI**: ratatui client on the same core.
 5. **M4 YouTube Music**: search, library, playlists, playback.
-6. **M5 polish**: visualizer, lyrics, ReplayGain, AUR package (`PKGBUILD`), Windows/macOS installers.
+6. **M5 polish**: done — skipped-track notices (mpv end-file errors), shared music folder, SQLite tag cache, lyrics (YouTube Music + embedded/.lrc), MPRIS cover art, non-blocking TUI network, responsive TUI buttons, PKGBUILD + release workflow (see packaging/README.md). Pending — real visualizer (see docs/spikes/visualizer.md), ReplayGain, list virtualization.
 7. **M6 Qobuz**, then Amazon decision.
 
 ## Delegation to Codex (candidates)

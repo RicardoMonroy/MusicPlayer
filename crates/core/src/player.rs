@@ -82,6 +82,39 @@ impl Player {
         self.mpv.set_property("volume", volume.clamp(0.0, 100.0))
     }
 
+    /// Queue indexes that failed to load since the last call (e.g. a YouTube track
+    /// that needs sign-in). mpv already skipped them; this only reports. Call from one thread.
+    pub fn take_failures(&self) -> Vec<usize> {
+        use libmpv2_sys as sys;
+        let mut ids = Vec::new();
+        loop {
+            // Raw API: libmpv2's wrapper drops end-file's playlist_entry_id, which we need.
+            let ev = unsafe { *sys::mpv_wait_event(self.mpv.ctx.as_ptr(), 0.0) };
+            match ev.event_id {
+                sys::mpv_event_id_MPV_EVENT_NONE => break,
+                sys::mpv_event_id_MPV_EVENT_END_FILE => {
+                    let end = unsafe { *(ev.data as *const sys::mpv_event_end_file) };
+                    if end.reason == sys::mpv_end_file_reason_MPV_END_FILE_REASON_ERROR {
+                        ids.push(end.playlist_entry_id);
+                    }
+                }
+                _ => {}
+            }
+        }
+        if ids.is_empty() {
+            return ids.into_iter().map(|_| 0).collect();
+        }
+        let count = self.mpv.get_property::<i64>("playlist-count").unwrap_or(0);
+        (0..count)
+            .filter(|i| {
+                self.mpv
+                    .get_property::<i64>(&format!("playlist/{i}/id"))
+                    .is_ok_and(|id| ids.contains(&id))
+            })
+            .map(|i| i as usize)
+            .collect()
+    }
+
     pub fn status(&self) -> Status {
         let f = |name| self.mpv.get_property::<f64>(name).unwrap_or(0.0);
         let idle = self.mpv.get_property::<bool>("idle-active").unwrap_or(true);
@@ -125,5 +158,17 @@ mod tests {
         assert!(p.status().paused);
         p.set_volume(150.0).unwrap();
         assert_eq!(p.status().volume, 100.0);
+    }
+
+    #[test]
+    fn reports_tracks_that_fail_to_load() {
+        let p = Player::new().unwrap();
+        p.mpv.set_property("ao", "null").unwrap();
+        p.play_queue(&["/nonexistent/a.flac".into(), tone(10)], 0)
+            .unwrap();
+        thread::sleep(Duration::from_millis(800));
+        assert_eq!(p.take_failures(), vec![0]);
+        assert_eq!(p.status().index, Some(1), "mpv skips to the next track");
+        assert!(p.take_failures().is_empty(), "reported once");
     }
 }

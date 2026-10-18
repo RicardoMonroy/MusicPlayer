@@ -15,8 +15,10 @@
   });
 
   $effect(() => {
-    const folder = savedFolder();
-    if (folder && player.tracks.length === 0) rescan(folder);
+    if (player.tracks.length > 0) return;
+    savedFolder().then((folder) => {
+      if (folder) rescan(folder);
+    });
   });
 
   async function rescan(folder: string) {

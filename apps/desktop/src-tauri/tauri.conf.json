@@ -40,6 +40,14 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "license": "GPL-3.0-or-later",
+    "category": "Music",
+    "shortDescription": "Local and YouTube Music player",
+    "linux": {
+      "deb": {
+        "depends": ["libmpv2", "yt-dlp"]
+      }
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

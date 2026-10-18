@@ -53,6 +53,13 @@ pub fn spawn(app: AppHandle) {
 
         let mut last: Option<Now> = None;
         loop {
+            let failed = app.state::<Player>().take_failures();
+            if let Some(t) = failed
+                .last()
+                .and_then(|&i| app.state::<Queue>().lock().unwrap().get(i).cloned())
+            {
+                let _ = app.emit("track-failed", t);
+            }
             let n = now(&app);
             if last.as_ref() != Some(&n) {
                 let _ = app.emit("now", &n);
@@ -71,12 +78,13 @@ fn sync_controls(c: &mut MediaControls, n: &Now, last: Option<&Now>) {
     if uri(Some(n)) != uri(last)
         && let Some(t) = &n.track
     {
+        let cover = cover_url(t);
         let _ = c.set_metadata(MediaMetadata {
             title: Some(&t.title),
             artist: Some(&t.artist),
             album: Some(&t.album),
             duration: t.duration.map(Duration::from_secs_f64),
-            cover_url: None,
+            cover_url: cover.as_deref(),
         });
     }
     let progress = Some(MediaPosition(Duration::from_secs_f64(
@@ -87,6 +95,23 @@ fn sync_controls(c: &mut MediaControls, n: &Now, last: Option<&Now>) {
         (Some(_), true) => MediaPlayback::Paused { progress },
         (Some(_), false) => MediaPlayback::Playing { progress },
     });
+}
+
+/// Cover for the OS media widget: remote art as-is, local art written to a cache file.
+/// The file name hashes the track so widgets that cache by URL refresh.
+fn cover_url(t: &Track) -> Option<String> {
+    if let Some(url) = &t.cover {
+        return Some(url.clone());
+    }
+    use std::hash::{Hash, Hasher};
+    let (_, bytes) = mp_local::cover(t.uri.as_ref())?;
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    t.uri.hash(&mut h);
+    let dir = dirs::cache_dir()?.join("musicplayer").join("covers");
+    std::fs::create_dir_all(&dir).ok()?;
+    let path = dir.join(format!("{:016x}", h.finish()));
+    std::fs::write(&path, bytes).ok()?;
+    url::Url::from_file_path(path).ok().map(String::from)
 }
 
 fn on_media_key(app: &AppHandle, e: MediaControlEvent) {

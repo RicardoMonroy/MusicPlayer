@@ -27,17 +27,24 @@ export const player = $state({
   status: { index: null, paused: false, position: 0, duration: 0, volume: 100 } as Status,
   coverUrl: "",
   accent: "120, 120, 160",
+  /** Short-lived warning, e.g. a track mpv could not load and skipped. */
+  notice: "",
 });
 
-const FOLDER_KEY = "library-folder";
+let noticeTimer: ReturnType<typeof setTimeout> | undefined;
+
+/** Where the folder lived before it was shared with the TUI. */
+const LEGACY_FOLDER_KEY = "library-folder";
 let coverFor = "";
 
+/** Scan `folder` and remember it (shared with the TUI). */
 export async function scan(folder: string) {
-  localStorage.setItem(FOLDER_KEY, folder);
   player.tracks = await invoke<Track[]>("scan_folder", { path: folder });
 }
 
-export const savedFolder = () => localStorage.getItem(FOLDER_KEY);
+export async function savedFolder(): Promise<string | null> {
+  return (await invoke<string | null>("music_folder")) ?? localStorage.getItem(LEGACY_FOLDER_KEY);
+}
 
 /** Replace the queue with `tracks` and start at `index`. */
 export const play = (tracks: Track[], index: number) =>
@@ -87,8 +94,14 @@ function apply(now: Now) {
 export function connect() {
   invoke<Now>("now").then(apply);
   const off = listen<Now>("now", (e) => apply(e.payload));
+  const offFailed = listen<Track>("track-failed", (e) => {
+    player.notice = `No se pudo reproducir “${e.payload.title}”; se saltó. ¿Requiere iniciar sesión?`;
+    clearTimeout(noticeTimer);
+    noticeTimer = setTimeout(() => (player.notice = ""), 7000);
+  });
   return () => {
     off.then((f) => f());
+    offFailed.then((f) => f());
   };
 }
 

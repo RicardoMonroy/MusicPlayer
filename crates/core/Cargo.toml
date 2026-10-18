@@ -5,5 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+dirs = "6"
 libmpv2 = "6"
+libmpv2-sys = "4"
 serde = { version = "1", features = ["derive"] }

@@ -18,4 +18,5 @@ pub struct Track {
 
 pub const APP_NAME: &str = "MusicPlayer";
 
+pub mod config;
 pub mod player;

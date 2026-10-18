@@ -15,11 +15,22 @@ fn err(e: impl std::fmt::Display) -> String {
     e.to_string()
 }
 
+/// The shared music folder (also used by the TUI).
+#[tauri::command]
+fn music_folder() -> Option<PathBuf> {
+    mp_core::config::music_folder()
+}
+
+/// Scan `path` and remember it as the music folder.
 #[tauri::command]
 async fn scan_folder(path: PathBuf) -> CmdResult<Vec<Track>> {
-    tauri::async_runtime::spawn_blocking(move || mp_local::scan(&path))
-        .await
-        .map_err(err)
+    mp_core::config::set_music_folder(&path).map_err(err)?;
+    tauri::async_runtime::spawn_blocking(move || match mp_core::config::library_db() {
+        Some(db) => mp_local::scan_cached(&path, &db),
+        None => mp_local::scan(&path),
+    })
+    .await
+    .map_err(err)
 }
 
 /// Replace the queue with `tracks` and start at `index`.
@@ -94,6 +105,17 @@ async fn fetch(url: &str) -> reqwest::Result<Vec<u8>> {
         .to_vec())
 }
 
+/// Plain-text lyrics for any track, or None.
+#[tauri::command]
+async fn lyrics(track: Track, yt: State<'_, YtMusic>) -> CmdResult<Option<String>> {
+    if track.uri.starts_with("http") {
+        return yt.lyrics(&track.uri).await.map_err(err);
+    }
+    tauri::async_runtime::spawn_blocking(move || mp_local::lyrics(track.uri.as_ref()))
+        .await
+        .map_err(err)
+}
+
 #[tauri::command]
 async fn yt_search(query: String, yt: State<'_, YtMusic>) -> CmdResult<SearchResults> {
     yt.search(&query).await.map_err(err)
@@ -163,6 +185,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             scan_folder,
+            music_folder,
             play,
             toggle_pause,
             next,
@@ -172,6 +195,7 @@ pub fn run() {
             now,
             show_view,
             cover,
+            lyrics,
             yt_search,
             yt_open,
             yt_logged_in,
