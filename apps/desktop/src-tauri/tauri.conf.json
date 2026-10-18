@@ -16,11 +16,26 @@
         "width": 1100,
         "height": 720,
         "label": "main"
+      },
+      {
+        "label": "compact",
+        "title": "MusicPlayer Mini",
+        "url": "/compact",
+        "width": 360,
+        "height": 220,
+        "decorations": false,
+        "transparent": true,
+        "resizable": false,
+        "alwaysOnTop": true,
+        "visible": false,
+        "skipTaskbar": true,
+        "shadow": false
       }
     ],
     "security": {
       "csp": "default-src 'self'; img-src 'self' asset: data: blob:; style-src 'self' 'unsafe-inline'"
-    }
+    },
+    "macOSPrivateApi": true
   },
   "bundle": {
     "active": true,

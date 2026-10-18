@@ -1,6 +1,6 @@
 # Plan — MusicPlayer
 
-Status: stack approved 2026-10-18. M0 done. M1 in progress.
+Status: stack approved 2026-10-18. M0, M1 done. M2 in progress.
 
 ## Stack
 
@@ -32,7 +32,8 @@ Queue = mpv playlist (gapless, auto-advance for free). The UI polls player statu
 - **Full view**: mix of Dopamine (clean library, album grid), Amberol (cover-driven adaptive colors), Tauon (fast browsing, gallery). Dynamic accent color from the cover art.
 - **Compact view**: small borderless window. Skin is a plugin: `skins/<name>/` with `skin.json` + Svelte component + assets.
   - Initial skins: Cassette (Kaset-like, reels spin with progress), Vinyl (record spins, tonearm moves with progress), Classic (Winamp 2-like, spectrum visualizer).
-- **Tray**: minimizes to tray. Click opens a popup with the active skin's mini controls.
+- **Tray**: closing a window hides it to the tray. Left click toggles the mini player (Windows/macOS). Linux trays (StatusNotifierItem) only deliver menu events, so on Linux the tray menu has Mini player / Play-Pause / Next / Previous / Quit.
+- **Media keys**: `souvlaki` (MPRIS on Linux, SMTC on Windows, Now Playing on macOS) fed by a Rust poller that also pushes `now` events to every window.
 - **TUI (Linux first)**: ytm-player-like, but big buttons, mouse support, tabs (Library, Search, Queue, Playlists), visible key hints.
 
 ## Streaming services — real constraints

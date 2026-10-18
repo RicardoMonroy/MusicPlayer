@@ -1,12 +1,12 @@
+mod media;
+mod tray;
+
 use std::{path::PathBuf, sync::Mutex};
 
-use mp_core::{
-    Track,
-    player::{Player, Status},
-};
-use tauri::{State, ipc::Response};
+use mp_core::{Track, player::Player};
+use tauri::{AppHandle, State, WindowEvent, ipc::Response};
 
-type Library = Mutex<Vec<Track>>;
+pub type Library = Mutex<Vec<Track>>;
 type CmdResult<T = ()> = Result<T, String>;
 
 fn err(e: impl std::fmt::Display) -> String {
@@ -59,10 +59,16 @@ fn set_volume(volume: f64, player: State<Player>) -> CmdResult {
     player.set_volume(volume).map_err(err)
 }
 
-// shortcut: UI polls status ~4x/s; switch to mpv property events if it shows up in profiles.
+/// Current state for a window that just opened; later changes arrive as `now` events.
 #[tauri::command]
-fn status(player: State<Player>) -> Status {
-    player.status()
+fn now(app: AppHandle) -> media::Now {
+    media::now(&app)
+}
+
+/// Switch between the full (`main`) and `compact` views.
+#[tauri::command]
+fn show_view(label: String, app: AppHandle) {
+    tray::show(&app, &label);
 }
 
 /// Raw cover bytes, empty when the track has none.
@@ -86,6 +92,18 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(player)
         .manage(Library::default())
+        .setup(|app| {
+            tray::build(app.handle())?;
+            media::spawn(app.handle().clone());
+            Ok(())
+        })
+        // Closing a window hides it to the tray; quit from the tray menu.
+        .on_window_event(|w, e| {
+            if let WindowEvent::CloseRequested { api, .. } = e {
+                api.prevent_close();
+                let _ = w.hide();
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             scan_folder,
             play,
@@ -94,7 +112,8 @@ pub fn run() {
             prev,
             seek,
             set_volume,
-            status,
+            now,
+            show_view,
             cover
         ])
         .run(tauri::generate_context!())

@@ -10,8 +10,8 @@
     prev,
     seek,
     setVolume,
-    current,
-    startPolling,
+    connect,
+    showView,
     fmtTime,
   } from "$lib/player.svelte";
 
@@ -19,7 +19,7 @@
   let scanning = $state(false);
   let dragPos = $state<number | null>(null);
 
-  const track = $derived(current());
+  const track = $derived(player.track);
   const shown = $derived.by(() => {
     const q = query.trim().toLowerCase();
     const all = player.tracks.map((t, i) => ({ t, i }));
@@ -29,7 +29,7 @@
     );
   });
 
-  $effect(() => startPolling());
+  $effect(() => connect());
 
   $effect(() => {
     const folder = savedFolder();
@@ -67,6 +67,7 @@
       <h1>Library</h1>
       <span class="count">{player.tracks.length} tracks</span>
       <input placeholder="Search" bind:value={query} />
+      <button class="pill ghost" onclick={() => showView("compact")}>Mini player</button>
       <button class="pill" onclick={pickFolder} disabled={scanning}>
         {scanning ? "Scanning…" : "Choose folder"}
       </button>
@@ -221,6 +222,11 @@
     padding: 8px 16px;
     font-weight: 600;
     cursor: pointer;
+  }
+  .ghost {
+    background: none;
+    color: inherit;
+    border: 1px solid #2f2f3a;
   }
   .empty {
     flex: 1;
