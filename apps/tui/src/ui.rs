@@ -52,18 +52,23 @@ fn draw_header(f: &mut Frame, app: &mut App, area: Rect) {
         x += w + 1;
     }
 
+    let query = if app.tab == Tab::Youtube {
+        &app.yt_query
+    } else {
+        &app.filter
+    };
     let search = if app.searching {
         Line::from(vec![
             Span::raw(" / ").fg(ACCENT),
-            Span::raw(&app.filter),
+            Span::raw(query),
             Span::raw("▏").fg(ACCENT),
         ])
-    } else if app.filter.is_empty() {
+    } else if query.is_empty() {
         Line::from(" / buscar ".fg(DIM))
     } else {
         Line::from(vec![
             Span::raw(" / ").fg(ACCENT),
-            Span::raw(&app.filter).fg(ACCENT),
+            Span::raw(query).fg(ACCENT),
         ])
     };
     let w = 30.min(inner.width.saturating_sub(x - inner.x));
@@ -119,6 +124,42 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
                 format!(" {} · {} canciones ", app.tab.title(), tracks.len()),
             )
         }
+        Tab::Youtube | Tab::Playlists => {
+            let view = app.remote_view();
+            let rows = view
+                .rows
+                .iter()
+                .map(|r| {
+                    let (marker, title, subtitle) = r.label();
+                    let style = match r {
+                        crate::youtube::YoutubeRow::Track(t) => row_style(&t.uri),
+                        _ => Style::new(),
+                    };
+                    Row::new(vec![
+                        Cell::from(marker),
+                        Cell::from(title),
+                        Cell::from(subtitle).fg(DIM),
+                    ])
+                    .style(style)
+                })
+                .collect();
+            (
+                Row::new(["Tipo", "Título", "Artista / descripción"]),
+                vec![
+                    Constraint::Length(12),
+                    Constraint::Fill(3),
+                    Constraint::Fill(2),
+                ],
+                rows,
+                format!(
+                    " {} ",
+                    view.opened
+                        .as_ref()
+                        .map(|(title, _, _)| title.as_str())
+                        .unwrap_or(app.tab.title())
+                ),
+            )
+        }
         Tab::Albums => {
             let rows = app
                 .albums
@@ -158,8 +199,31 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
         .title(title.bold());
     app.areas.list = block.inner(area);
 
+    if matches!(app.tab, Tab::Youtube | Tab::Playlists) {
+        let error = app.remote_error();
+        let message = app.message.as_deref().or(error);
+        if let Some(message) = message {
+            f.render_widget(
+                Paragraph::new(message.replace(['\n', '\r'], " "))
+                    .fg(if error.is_some() { Color::Red } else { DIM })
+                    .block(block),
+                area,
+            );
+            return;
+        }
+    }
+
     if rows.is_empty() {
         let msg = match app.tab {
+            Tab::Youtube if app.remote_view().opened.is_some() => {
+                "No hay canciones en esta colección.".into()
+            }
+            Tab::Youtube => "Pulsa / para buscar canciones, álbumes y playlists.".into(),
+            Tab::Playlists if !app.logged_in => {
+                "Inicia sesión en la app de escritorio (Conectar cuenta); la sesión se comparte."
+                    .into()
+            }
+            Tab::Playlists => "No hay canciones en esta colección.".into(),
             Tab::Queue => "La cola está vacía. Elige algo en Biblioteca o Álbumes.".to_string(),
             _ if !app.filter.is_empty() => format!("Nada coincide con “{}”.", app.filter),
             _ => format!(
@@ -303,11 +367,43 @@ fn meter(ratio: f64, width: u16, color: Color) -> Paragraph<'static> {
 
 fn draw_help(f: &mut Frame, app: &App, area: Rect) {
     let keys: &[(&str, &str)] = if app.searching {
-        &[
-            ("escribe", "filtrar"),
-            ("Enter", "listo"),
-            ("Esc", "borrar"),
-        ]
+        if app.tab == Tab::Youtube {
+            &[
+                ("escribe", "consulta"),
+                ("Enter", "buscar"),
+                ("Esc", "cancelar"),
+            ]
+        } else {
+            &[
+                ("escribe", "filtrar"),
+                ("Enter", "listo"),
+                ("Esc", "borrar"),
+            ]
+        }
+    } else if matches!(app.tab, Tab::Youtube | Tab::Playlists) {
+        if app.remote_view().opened.is_some() {
+            &[
+                ("Enter", "reproducir"),
+                ("Esc/⌫", "volver"),
+                ("Espacio", "pausar"),
+                ("1-5/Tab", "pestaña"),
+                ("q", "salir"),
+            ]
+        } else if app.tab == Tab::Youtube {
+            &[
+                ("/", "buscar"),
+                ("Enter", "reproducir/abrir"),
+                ("1-5/Tab", "pestaña"),
+                ("q", "salir"),
+            ]
+        } else {
+            &[
+                ("Enter", "abrir"),
+                ("1-5/Tab", "pestaña"),
+                ("Espacio", "pausar"),
+                ("q", "salir"),
+            ]
+        }
     } else {
         &[
             ("Espacio", "reproducir/pausar"),
@@ -316,8 +412,8 @@ fn draw_help(f: &mut Frame, app: &App, area: Rect) {
             ("n/p", "sig./ant."),
             ("←/→", "±5 s"),
             ("+/-", "volumen"),
-            ("Tab", "pestaña"),
-            ("/", "buscar"),
+            ("1-5/Tab", "pestaña"),
+            ("/", "filtrar biblioteca"),
         ]
     };
     let spans: Vec<Span> = keys
@@ -352,7 +448,7 @@ mod tests {
             .collect();
         assert!(screen.contains("Midnight City"));
         assert!(screen.contains("Reproducir"));
-        assert_eq!(a.areas.tabs.len(), 3);
+        assert_eq!(a.areas.tabs.len(), 5);
         assert!(a.areas.buttons.iter().all(|r| r.height == 3));
         assert!(a.areas.progress.width > 0 && a.areas.volume.width > 0);
     }

@@ -1,10 +1,7 @@
 <script lang="ts">
-  import { open } from "@tauri-apps/plugin-dialog";
+  import "$lib/app.css";
   import {
     player,
-    scan,
-    savedFolder,
-    play,
     togglePause,
     next,
     prev,
@@ -14,41 +11,18 @@
     showView,
     fmtTime,
   } from "$lib/player.svelte";
+  import Local from "$lib/views/Local.svelte";
+  import YouTube from "$lib/views/YouTube.svelte";
 
-  let query = $state("");
-  let scanning = $state(false);
+  type View = "local" | "youtube";
+  const VIEW_KEY = "view";
+  let view = $state<View>((localStorage.getItem(VIEW_KEY) as View) ?? "local");
   let dragPos = $state<number | null>(null);
 
   const track = $derived(player.track);
-  const shown = $derived.by(() => {
-    const q = query.trim().toLowerCase();
-    const all = player.tracks.map((t, i) => ({ t, i }));
-    if (!q) return all;
-    return all.filter(({ t }) =>
-      `${t.title} ${t.artist} ${t.album}`.toLowerCase().includes(q),
-    );
-  });
 
   $effect(() => connect());
-
-  $effect(() => {
-    const folder = savedFolder();
-    if (folder) rescan(folder);
-  });
-
-  async function rescan(folder: string) {
-    scanning = true;
-    try {
-      await scan(folder);
-    } finally {
-      scanning = false;
-    }
-  }
-
-  async function pickFolder() {
-    const folder = await open({ directory: true });
-    if (typeof folder === "string") rescan(folder);
-  }
+  $effect(() => localStorage.setItem(VIEW_KEY, view));
 
   function onKey(e: KeyboardEvent) {
     if (e.target instanceof HTMLInputElement) return;
@@ -62,39 +36,27 @@
 <svelte:window onkeydown={onKey} />
 
 <div class="app" style="--accent: {player.accent}">
-  <section class="library">
-    <header>
-      <h1>Biblioteca</h1>
-      <span class="count">{player.tracks.length} canciones</span>
-      <input placeholder="Buscar" bind:value={query} />
-      <button class="pill ghost" onclick={() => showView("compact")}>Mini reproductor</button>
-      <button class="pill" onclick={pickFolder} disabled={scanning}>
-        {scanning ? "Escaneando…" : "Elegir carpeta"}
-      </button>
-    </header>
+  <nav class="side">
+    <div class="brand">♫ MusicPlayer</div>
+    <button class:on={view === "local"} onclick={() => (view = "local")}>
+      <svg viewBox="0 0 24 24"><path d="M4 6h2v14H4zm4-2h2v16H8zm4 2h2v14h-2zm4.5-1.5 1.9-.6 4.2 14.3-1.9.6z" /></svg>
+      Biblioteca
+    </button>
+    <button class:on={view === "youtube"} onclick={() => (view = "youtube")}>
+      <svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20m0 18a8 8 0 1 1 0-16 8 8 0 0 1 0 16m-2-12.5v9l6-4.5z" /></svg>
+      YouTube Music
+    </button>
+    <button class="mini" onclick={() => showView("compact")}>
+      <svg viewBox="0 0 24 24"><path d="M19 11h-8v6h8zm4 8V5a2 2 0 0 0-2-2H3a2 2 0 0 0-2 2v14c0 1.1.9 2 2 2h18a2 2 0 0 0 2-2m-2 0H3V5h18z" /></svg>
+      Mini reproductor
+    </button>
+  </nav>
 
-    {#if player.tracks.length === 0}
-      <div class="empty">
-        <p>Aún no hay música.</p>
-        <button class="pill" onclick={pickFolder}>Elige tu carpeta de música</button>
-      </div>
-    {:else}
-      <!-- shortcut: renders every row; add virtualization past ~10k tracks. -->
-      <ol class="tracks">
-        {#each shown as { t, i } (t.uri)}
-          <li class:active={i === player.status.index}>
-            <button class="row" ondblclick={() => play(i)}>
-              <span class="no">{t.track_no ?? ""}</span>
-              <span class="title">{t.title}</span>
-              <span class="artist">{t.artist}</span>
-              <span class="album">{t.album}</span>
-              <span class="dur">{fmtTime(t.duration)}</span>
-            </button>
-          </li>
-        {/each}
-      </ol>
-    {/if}
-  </section>
+  {#if view === "local"}
+    <Local />
+  {:else}
+    <YouTube />
+  {/if}
 
   <aside class="now">
     {#if player.coverUrl}
@@ -176,111 +138,50 @@
     --accent-c: rgb(var(--accent));
     height: 100vh;
     display: grid;
-    grid-template-columns: 1fr 340px;
+    grid-template-columns: 210px minmax(0, 1fr) 340px;
     grid-template-rows: 1fr 88px;
   }
 
-  .library {
-    overflow: hidden;
+  .side {
     display: flex;
     flex-direction: column;
-    padding: 20px 8px 0 24px;
+    gap: 4px;
+    padding: 20px 12px;
+    background: #0b0b0e;
+    border-right: 1px solid #1d1d24;
   }
-  header {
+  .brand {
+    font-weight: 800;
+    font-size: 17px;
+    color: var(--accent-c);
+    padding: 4px 12px 18px;
+  }
+  .side button {
     display: flex;
     align-items: center;
-    gap: 14px;
-    padding-bottom: 14px;
-  }
-  h1 {
-    margin: 0;
-    font-size: 26px;
-    font-weight: 700;
-  }
-  .count {
-    color: var(--fg-dim);
-    font-size: 13px;
-    margin-right: auto;
-  }
-  header input {
-    background: #1c1c22;
-    border: 1px solid #2a2a33;
-    border-radius: 999px;
-    padding: 7px 14px;
-    color: inherit;
-    width: 200px;
-    outline: none;
-  }
-  header input:focus {
-    border-color: var(--accent-c);
-  }
-  .pill {
-    background: var(--accent-c);
-    color: #111;
-    border: 0;
-    border-radius: 999px;
-    padding: 8px 16px;
-    font-weight: 600;
-    cursor: pointer;
-  }
-  .ghost {
-    background: none;
-    color: inherit;
-    border: 1px solid #2f2f3a;
-  }
-  .empty {
-    flex: 1;
-    display: grid;
-    place-content: center;
-    justify-items: center;
-    color: var(--fg-dim);
-  }
-
-  .tracks {
-    list-style: none;
-    margin: 0;
-    padding: 0 12px 12px 0;
-    overflow-y: auto;
-  }
-  .row {
-    width: 100%;
-    display: grid;
-    grid-template-columns: 36px 2fr 1.3fr 1.3fr 52px;
     gap: 12px;
-    align-items: center;
-    text-align: left;
     background: none;
     border: 0;
     border-radius: 8px;
-    padding: 9px 10px;
-    cursor: default;
-    font-size: 14px;
-  }
-  .row span {
-    overflow: hidden;
-    white-space: nowrap;
-    text-overflow: ellipsis;
-  }
-  .row:hover {
-    background: #1b1b21;
-  }
-  .no,
-  .dur,
-  .artist,
-  .album {
+    padding: 10px 12px;
+    text-align: left;
     color: var(--fg-dim);
-  }
-  .no,
-  .dur {
-    font-variant-numeric: tabular-nums;
-    text-align: right;
-  }
-  .active .row {
-    background: rgba(var(--accent), 0.16);
-  }
-  .active .title {
-    color: var(--accent-c);
     font-weight: 600;
+    cursor: pointer;
+  }
+  .side button:hover {
+    color: #fff;
+    background: #17171d;
+  }
+  .side button.on {
+    color: #fff;
+    background: rgba(var(--accent), 0.18);
+  }
+  .side svg {
+    width: 20px;
+  }
+  .side .mini {
+    margin-top: auto;
   }
 
   .now {

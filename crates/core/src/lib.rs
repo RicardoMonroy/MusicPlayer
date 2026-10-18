@@ -12,6 +12,8 @@ pub struct Track {
     pub track_no: Option<u32>,
     /// Seconds.
     pub duration: Option<f64>,
+    /// Remote cover art URL; local files read embedded art instead.
+    pub cover: Option<String>,
 }
 
 pub const APP_NAME: &str = "MusicPlayer";

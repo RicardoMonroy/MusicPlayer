@@ -1,6 +1,6 @@
 # Plan — MusicPlayer
 
-Status: stack approved 2026-10-18. M0–M3 done.
+Status: stack approved 2026-10-18. M0–M3 done, M4 in progress. License: GPL-3.0-or-later (rustypipe and libmpv are GPL).
 
 ## Stack
 
@@ -38,7 +38,8 @@ Queue = mpv playlist (gapless, auto-advance for free). The UI polls player statu
 
 ## Streaming services — real constraints
 
-- **YouTube Music**: no official API. Use `ytmusicapi` logic (Python sidecar first, or the Rust port `ytmapi-rs`) plus yt-dlp for streams. Works, but against YouTube ToS and breaks when YouTube changes things. Login via browser cookies/headers.
+- **YouTube Music** (`crates/providers/ytmusic`): metadata via `rustypipe` (search, albums, playlists, saved library, liked). Playback: mpv opens `music.youtube.com/watch?v=` URLs through its yt-dlp hook (`ytdl-format=bestaudio/best`), so **yt-dlp must be on PATH**. Login = cookies.txt exported from a private browser session; stored in rustypipe's cache under the app data dir (`<data>/dev.ricardo.musicplayer/ytmusic`), shared by desktop and TUI. Unofficial API: against YouTube ToS and may break when YouTube changes.
+  - shortcut: yt-dlp does not get the cookies, so private/age-restricted tracks may fail to play; pass `ytdl-raw-options=cookies=<file>` if needed.
 - **Qobuz**: partner API exists. Community clients (streamrip, qobuz-dl) use the web player app_id. Hi-res FLAC streams work well with mpv. Do it when the account is active.
 - **Amazon Music**: no public playback API and DRM (Widevine). Tauri webviews on Linux (WebKitGTK) do not support Widevine. Options: (a) embed the web player in a separate Electron window with Widevine (castLabs build), (b) control-only integration (now-playing + media keys of the official app), (c) drop it. Recommendation: (b) or postpone.
 

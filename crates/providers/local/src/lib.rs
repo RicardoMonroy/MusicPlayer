@@ -58,6 +58,7 @@ pub fn scan(root: &Path) -> Vec<Track> {
                 duration: file
                     .as_ref()
                     .map(|file| file.properties().duration().as_secs_f64()),
+                cover: None,
             }
         })
         .collect();
@@ -143,6 +144,7 @@ mod tests {
                 uri: path.to_string_lossy().into_owned(),
                 track_no: None,
                 duration: None,
+                cover: None,
             }]
         );
     }

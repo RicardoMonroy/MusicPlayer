@@ -4,9 +4,11 @@ mod tray;
 use std::{path::PathBuf, sync::Mutex};
 
 use mp_core::{Track, player::Player};
-use tauri::{AppHandle, State, WindowEvent, ipc::Response};
+use mp_ytmusic::{Kind, Library, SearchResults, YtMusic};
+use tauri::{AppHandle, Manager, State, WindowEvent, ipc::Response};
 
-pub type Library = Mutex<Vec<Track>>;
+/// What mpv is playing, in order; `Status::index` points into it.
+pub type Queue = Mutex<Vec<Track>>;
 type CmdResult<T = ()> = Result<T, String>;
 
 fn err(e: impl std::fmt::Display) -> String {
@@ -14,24 +16,19 @@ fn err(e: impl std::fmt::Display) -> String {
 }
 
 #[tauri::command]
-async fn scan_folder(path: PathBuf, library: State<'_, Library>) -> CmdResult<Vec<Track>> {
-    let tracks = tauri::async_runtime::spawn_blocking(move || mp_local::scan(&path))
+async fn scan_folder(path: PathBuf) -> CmdResult<Vec<Track>> {
+    tauri::async_runtime::spawn_blocking(move || mp_local::scan(&path))
         .await
-        .map_err(err)?;
-    *library.lock().unwrap() = tracks.clone();
-    Ok(tracks)
+        .map_err(err)
 }
 
-/// Queue the whole library and start at `index`.
+/// Replace the queue with `tracks` and start at `index`.
 #[tauri::command]
-fn play(index: usize, library: State<Library>, player: State<Player>) -> CmdResult {
-    let uris: Vec<String> = library
-        .lock()
-        .unwrap()
-        .iter()
-        .map(|t| t.uri.clone())
-        .collect();
-    player.play_queue(&uris, index).map_err(err)
+fn play(tracks: Vec<Track>, index: usize, queue: State<Queue>, player: State<Player>) -> CmdResult {
+    let uris: Vec<String> = tracks.iter().map(|t| t.uri.clone()).collect();
+    player.play_queue(&uris, index).map_err(err)?;
+    *queue.lock().unwrap() = tracks;
+    Ok(())
 }
 
 #[tauri::command]
@@ -71,17 +68,71 @@ fn show_view(label: String, app: AppHandle) {
     tray::show(&app, &label);
 }
 
-/// Raw cover bytes, empty when the track has none.
+/// Raw cover bytes, empty when the track has none. Remote art is fetched here
+/// so the webview can read its pixels for the accent color (no CORS taint).
 #[tauri::command]
-async fn cover(uri: String) -> Response {
-    let bytes = tauri::async_runtime::spawn_blocking(move || {
-        mp_local::cover(uri.as_ref())
-            .map(|(_, b)| b)
-            .unwrap_or_default()
-    })
-    .await
-    .unwrap_or_default();
+async fn cover(track: Track) -> Response {
+    let bytes = match track.cover {
+        Some(url) => fetch(&url).await.unwrap_or_default(),
+        None => tauri::async_runtime::spawn_blocking(move || {
+            mp_local::cover(track.uri.as_ref())
+                .map(|(_, b)| b)
+                .unwrap_or_default()
+        })
+        .await
+        .unwrap_or_default(),
+    };
     Response::new(bytes)
+}
+
+async fn fetch(url: &str) -> reqwest::Result<Vec<u8>> {
+    Ok(reqwest::get(url)
+        .await?
+        .error_for_status()?
+        .bytes()
+        .await?
+        .to_vec())
+}
+
+#[tauri::command]
+async fn yt_search(query: String, yt: State<'_, YtMusic>) -> CmdResult<SearchResults> {
+    yt.search(&query).await.map_err(err)
+}
+
+#[tauri::command]
+async fn yt_open(kind: Kind, id: String, yt: State<'_, YtMusic>) -> CmdResult<Vec<Track>> {
+    yt.open(&kind, &id).await.map_err(err)
+}
+
+#[tauri::command]
+async fn yt_logged_in(yt: State<'_, YtMusic>) -> CmdResult<bool> {
+    Ok(yt.logged_in().await)
+}
+
+/// Log in from a cookies.txt file chosen by the user.
+#[tauri::command]
+async fn yt_login(path: PathBuf, yt: State<'_, YtMusic>, player: State<'_, Player>) -> CmdResult {
+    let txt = std::fs::read_to_string(&path).map_err(err)?;
+    yt.login(&txt).await.map_err(err)?;
+    player
+        .set_ytdl_cookies(yt.cookies_file().as_deref())
+        .map_err(err)
+}
+
+#[tauri::command]
+async fn yt_logout(yt: State<'_, YtMusic>, player: State<'_, Player>) -> CmdResult {
+    yt.logout().await.map_err(err)?;
+    player.set_ytdl_cookies(None).map_err(err)
+}
+
+#[tauri::command]
+async fn yt_library(yt: State<'_, YtMusic>) -> CmdResult<Library> {
+    yt.library().await.map_err(err)
+}
+
+#[tauri::command]
+async fn yt_liked(yt: State<'_, YtMusic>) -> CmdResult<Vec<Track>> {
+    yt.liked().await.map_err(err)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -91,8 +142,14 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(player)
-        .manage(Library::default())
+        .manage(Queue::default())
         .setup(|app| {
+            let dir = app.path().app_data_dir()?.join("ytmusic");
+            std::fs::create_dir_all(&dir)?;
+            let yt = YtMusic::new(&dir).map_err(|e| e.to_string())?;
+            app.state::<Player>()
+                .set_ytdl_cookies(yt.cookies_file().as_deref())?;
+            app.manage(yt);
             tray::build(app.handle())?;
             media::spawn(app.handle().clone());
             Ok(())
@@ -114,7 +171,14 @@ pub fn run() {
             set_volume,
             now,
             show_view,
-            cover
+            cover,
+            yt_search,
+            yt_open,
+            yt_logged_in,
+            yt_login,
+            yt_logout,
+            yt_library,
+            yt_liked
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

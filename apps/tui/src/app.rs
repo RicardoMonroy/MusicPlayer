@@ -1,5 +1,9 @@
 use std::{path::PathBuf, time::Instant};
 
+use crate::youtube::{YoutubeRow, YoutubeView};
+use mp_ytmusic::YtMusic;
+use tokio::runtime::Runtime;
+
 use mp_core::{
     Track,
     player::{Player, Status},
@@ -11,9 +15,17 @@ pub enum Tab {
     Library,
     Albums,
     Queue,
+    Youtube,
+    Playlists,
 }
 
-pub const TABS: [Tab; 3] = [Tab::Library, Tab::Albums, Tab::Queue];
+pub const TABS: [Tab; 5] = [
+    Tab::Library,
+    Tab::Albums,
+    Tab::Queue,
+    Tab::Youtube,
+    Tab::Playlists,
+];
 
 impl Tab {
     pub fn title(self) -> &'static str {
@@ -21,6 +33,8 @@ impl Tab {
             Tab::Library => "Biblioteca",
             Tab::Albums => "Álbumes",
             Tab::Queue => "Cola",
+            Tab::Youtube => "YouTube",
+            Tab::Playlists => "Playlists",
         }
     }
 }
@@ -42,7 +56,22 @@ pub struct Areas {
     pub volume: Rect,
 }
 
+pub enum NetworkAction {
+    Search,
+    Library,
+    Open(YoutubeRow, usize),
+}
+
 pub struct App {
+    pub runtime: Result<Runtime, String>,
+    pub youtube: Result<YtMusic, String>,
+    pub yt_view: YoutubeView,
+    pub playlists: YoutubeView,
+    pub yt_query: String,
+    pub pending: Option<NetworkAction>,
+    pub message: Option<String>,
+    pub library_loaded: bool,
+    pub logged_in: bool,
     pub player: Player,
     pub folder: PathBuf,
     pub library: Vec<Track>,
@@ -65,7 +94,30 @@ impl App {
         let albums = group_albums(&library);
         let mut table = TableState::default();
         table.select((!library.is_empty()).then_some(0));
+        let runtime = Runtime::new().map_err(|e| format!("No se pudo iniciar Tokio: {e}"));
+        let youtube = (|| {
+            let dir = dirs::data_dir()
+                .ok_or("No se encontró la carpeta de datos")?
+                .join("dev.ricardo.musicplayer")
+                .join("ytmusic");
+            std::fs::create_dir_all(&dir)
+                .map_err(|e| format!("No se pudo crear la carpeta: {e}"))?;
+            YtMusic::new(&dir).map_err(|e| format!("No se pudo iniciar YouTube Music: {e}"))
+        })();
+        // Login is done in the desktop app; reuse its cookies so sign-in-only tracks stream.
+        if let Ok(yt) = &youtube {
+            let _ = player.set_ytdl_cookies(yt.cookies_file().as_deref());
+        }
         Self {
+            runtime,
+            youtube,
+            yt_view: YoutubeView::default(),
+            playlists: YoutubeView::default(),
+            yt_query: String::new(),
+            pending: None,
+            message: None,
+            library_loaded: false,
+            logged_in: false,
             player,
             folder,
             library,
@@ -109,11 +161,23 @@ impl App {
             Tab::Library => self.filtered().len(),
             Tab::Albums => self.albums.len(),
             Tab::Queue => self.queue.len(),
+            Tab::Youtube | Tab::Playlists => {
+                if self.remote_error().is_some() {
+                    0
+                } else {
+                    self.remote_view().rows.len()
+                }
+            }
         }
     }
 
     pub fn set_tab(&mut self, tab: Tab) {
         self.tab = tab;
+        self.searching = false;
+        self.last_click = None;
+        if tab == Tab::Playlists && !self.library_loaded {
+            self.schedule(NetworkAction::Library, "Cargando playlists…");
+        }
         let start = match tab {
             Tab::Queue => self.status.index.unwrap_or(0),
             _ => 0,
@@ -151,6 +215,18 @@ impl App {
                 None => return,
             },
             Tab::Queue => (self.queue.clone(), sel),
+            Tab::Youtube | Tab::Playlists => {
+                let Some(row) = self.remote_view().rows.get(sel).cloned() else {
+                    return;
+                };
+                match row {
+                    YoutubeRow::Track(_) => (self.remote_view().tracks(), sel),
+                    _ => {
+                        self.schedule(NetworkAction::Open(row, sel), "Abriendo colección…");
+                        return;
+                    }
+                }
+            }
         };
         if start >= queue.len() {
             return;
@@ -159,6 +235,94 @@ impl App {
         if self.player.play_queue(&uris, start).is_ok() {
             self.queue = queue;
         }
+    }
+
+    pub fn remote_view(&self) -> &YoutubeView {
+        if self.tab == Tab::Playlists {
+            &self.playlists
+        } else {
+            &self.yt_view
+        }
+    }
+
+    pub fn remote_view_mut(&mut self) -> &mut YoutubeView {
+        if self.tab == Tab::Playlists {
+            &mut self.playlists
+        } else {
+            &mut self.yt_view
+        }
+    }
+
+    pub fn remote_error(&self) -> Option<&str> {
+        self.runtime
+            .as_ref()
+            .err()
+            .or(self.youtube.as_ref().err())
+            .or(self.remote_view().error.as_ref())
+            .map(String::as_str)
+    }
+
+    pub fn back(&mut self) {
+        if matches!(self.tab, Tab::Youtube | Tab::Playlists) {
+            if let Some(selection) = self.remote_view_mut().back() {
+                self.table = TableState::default().with_selected(Some(selection));
+            } else {
+                self.remote_view_mut().error = None;
+                self.table.select((self.row_count() > 0).then_some(0));
+            }
+        } else {
+            self.filter.clear();
+            self.table.select((self.row_count() > 0).then_some(0));
+        }
+        self.last_click = None;
+    }
+
+    pub fn schedule(&mut self, action: NetworkAction, message: &str) {
+        self.pending = Some(action);
+        self.message = Some(message.into());
+    }
+
+    pub fn run_pending(&mut self) {
+        let Some(action) = self.pending.take() else {
+            return;
+        };
+        self.message = None;
+        let (Ok(runtime), Ok(yt)) = (&self.runtime, &self.youtube) else {
+            return;
+        };
+        // shortcut: blocking network calls freeze input for ~1-2 s; move to a worker thread if it bothers
+        let result = match action {
+            NetworkAction::Search => runtime
+                .block_on(yt.search(&self.yt_query))
+                .map(|results| self.yt_view.search(results)),
+            NetworkAction::Library => {
+                self.library_loaded = true;
+                self.logged_in = runtime.block_on(yt.logged_in());
+                if self.logged_in {
+                    runtime
+                        .block_on(yt.library())
+                        .map(|library| self.playlists.library(library))
+                } else {
+                    Ok(())
+                }
+            }
+            NetworkAction::Open(row, selection) => {
+                let (title, result) = match row {
+                    YoutubeRow::Collection(c) => {
+                        (c.title, runtime.block_on(yt.open(&c.kind, &c.id)))
+                    }
+                    YoutubeRow::Liked => ("♥ Me gusta".into(), runtime.block_on(yt.liked())),
+                    YoutubeRow::Track(_) => return,
+                };
+                result.map(|tracks| self.remote_view_mut().open(title, tracks, selection))
+            }
+        };
+        if let Err(e) = result {
+            self.remote_view_mut().error =
+                Some(format!("Error de YouTube Music: {e}").replace(['\n', '\r'], " "));
+        }
+        self.table = TableState::default().with_selected((self.row_count() > 0).then_some(0));
+        self.last_click = None;
     }
 
     pub fn prev(&mut self) -> Result<(), mp_core::player::Error> {
@@ -235,6 +399,7 @@ pub mod tests {
             uri: format!("/{artist}/{album}/{title}"),
             track_no: None,
             duration: Some(125.0),
+            cover: None,
         }
     }
 
@@ -294,8 +459,8 @@ pub mod tests {
         a.move_selection(-10);
         assert_eq!(a.table.selected(), Some(0));
         a.cycle_tab(-1);
-        assert_eq!(a.tab, Tab::Queue);
-        assert_eq!(a.table.selected(), None, "empty queue");
+        assert_eq!(a.tab, Tab::Playlists);
+        assert_eq!(a.table.selected(), None, "empty playlists");
         a.cycle_tab(1);
         assert_eq!(a.tab, Tab::Library);
     }

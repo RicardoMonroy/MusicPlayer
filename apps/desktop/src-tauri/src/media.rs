@@ -10,7 +10,7 @@ use souvlaki::{
 };
 use tauri::{AppHandle, Emitter, Manager};
 
-use crate::Library;
+use crate::Queue;
 
 #[derive(Serialize, Clone, PartialEq)]
 pub struct Now {
@@ -22,7 +22,7 @@ pub fn now(app: &AppHandle) -> Now {
     let status = app.state::<Player>().status();
     let track = status
         .index
-        .and_then(|i| app.state::<Library>().lock().unwrap().get(i).cloned());
+        .and_then(|i| app.state::<Queue>().lock().unwrap().get(i).cloned());
     Now { status, track }
 }
 

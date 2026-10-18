@@ -8,6 +8,7 @@ export type Track = {
   uri: string;
   track_no: number | null;
   duration: number | null;
+  cover: string | null;
 };
 
 export type Status = {
@@ -38,7 +39,9 @@ export async function scan(folder: string) {
 
 export const savedFolder = () => localStorage.getItem(FOLDER_KEY);
 
-export const play = (index: number) => invoke("play", { index });
+/** Replace the queue with `tracks` and start at `index`. */
+export const play = (tracks: Track[], index: number) =>
+  invoke("play", { tracks: $state.snapshot(tracks), index });
 export const togglePause = () => invoke("toggle_pause");
 export const next = () => invoke("next");
 export const prev = () => invoke("prev");
@@ -51,7 +54,7 @@ async function loadCover(track: Track | null) {
   if (player.coverUrl) URL.revokeObjectURL(player.coverUrl);
   player.coverUrl = "";
   if (!track) return;
-  const bytes = await invoke<ArrayBuffer>("cover", { uri: track.uri });
+  const bytes = await invoke<ArrayBuffer>("cover", { track });
   if (bytes.byteLength === 0) return;
   player.coverUrl = URL.createObjectURL(new Blob([bytes]));
   player.accent = await averageColor(player.coverUrl);

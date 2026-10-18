@@ -26,4 +26,6 @@ mp-core = { path = "../../../crates/core" }
 tauri-plugin-dialog = "2"
 mp-local = { version = "0.1.0", path = "../../../crates/providers/local" }
 souvlaki = "0.8"
+mp-ytmusic = { version = "0.1.0", path = "../../../crates/providers/ytmusic" }
+reqwest = "0.12"
 

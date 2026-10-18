@@ -28,6 +28,8 @@ impl Player {
             init.set_option("idle", "yes")?;
             init.set_option("gapless-audio", "weak")?;
             init.set_option("audio-display", "no")?;
+            // Streams (YouTube via yt-dlp): fetch audio only.
+            init.set_option("ytdl-format", "bestaudio/best")?;
             Ok(())
         })?;
         // State is read on demand; mpv's event queue is bounded, undrained events are dropped.
@@ -44,6 +46,14 @@ impl Player {
         self.mpv.set_property("pause", false)?;
         self.mpv
             .command("playlist-play-index", &[&start.to_string()])
+    }
+
+    /// Cookies for yt-dlp, for YouTube tracks that only stream when signed in. None clears them.
+    // shortcut: mpv's key=value list splits on ',', so a path containing ',' breaks; quote it if that shows up.
+    pub fn set_ytdl_cookies(&self, path: Option<&std::path::Path>) -> Result<(), Error> {
+        let value = path.map(|p| format!("cookies={}", p.display()));
+        self.mpv
+            .set_property("ytdl-raw-options", value.unwrap_or_default())
     }
 
     pub fn toggle_pause(&self) -> Result<(), Error> {

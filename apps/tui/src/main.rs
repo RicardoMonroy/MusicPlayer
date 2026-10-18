@@ -1,5 +1,6 @@
 mod app;
 mod ui;
+mod youtube;
 
 use std::{
     path::PathBuf,
@@ -53,6 +54,10 @@ fn run(
     while !app.quit {
         app.tick();
         terminal.draw(|f| ui::draw(f, app))?;
+        if app.pending.is_some() {
+            app.run_pending();
+            continue;
+        }
         if event::poll(Duration::from_millis(250))? {
             match event::read()? {
                 Event::Key(k) if k.kind == KeyEventKind::Press => on_key(app, k),
@@ -66,16 +71,27 @@ fn run(
 
 fn on_key(app: &mut App, k: KeyEvent) {
     if app.searching {
+        let youtube = app.tab == app::Tab::Youtube;
+        let query = if youtube {
+            &mut app.yt_query
+        } else {
+            &mut app.filter
+        };
         match k.code {
             KeyCode::Esc => {
-                app.filter.clear();
+                query.clear();
                 app.searching = false;
             }
-            KeyCode::Enter => app.searching = false,
-            KeyCode::Backspace => {
-                app.filter.pop();
+            KeyCode::Enter => {
+                app.searching = false;
+                if youtube {
+                    app.schedule(app::NetworkAction::Search, "Buscando…");
+                }
             }
-            KeyCode::Char(c) => app.filter.push(c),
+            KeyCode::Backspace => {
+                query.pop();
+            }
+            KeyCode::Char(c) => query.push(c),
             _ => return,
         }
         app.table.select((app.row_count() > 0).then_some(0));
@@ -93,16 +109,15 @@ fn on_key(app: &mut App, k: KeyEvent) {
         KeyCode::Char('+') | KeyCode::Char('=') => app.volume_by(5.0),
         KeyCode::Char('-') => app.volume_by(-5.0),
         KeyCode::Char('/') => {
-            app.set_tab(app::Tab::Library);
+            if app.tab != app::Tab::Youtube {
+                app.set_tab(app::Tab::Library);
+            }
             app.searching = true;
         }
-        KeyCode::Esc => {
-            app.filter.clear();
-            app.table.select((app.row_count() > 0).then_some(0));
-        }
+        KeyCode::Esc | KeyCode::Backspace => app.back(),
         KeyCode::Tab => app.cycle_tab(1),
         KeyCode::BackTab => app.cycle_tab(-1),
-        KeyCode::Char(c @ '1'..='3') => app.set_tab(TABS[c as usize - '1' as usize]),
+        KeyCode::Char(c @ '1'..='5') => app.set_tab(TABS[c as usize - '1' as usize]),
         KeyCode::Up | KeyCode::Char('k') => app.move_selection(-1),
         KeyCode::Down | KeyCode::Char('j') => app.move_selection(1),
         KeyCode::PageUp => app.move_selection(-10),
@@ -151,5 +166,48 @@ fn on_mouse(app: &mut App, m: MouseEvent) {
             }
         }
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::{NetworkAction, Tab, tests::app};
+
+    fn key(app: &mut App, code: KeyCode) {
+        on_key(app, KeyEvent::new(code, KeyModifiers::NONE));
+    }
+
+    #[test]
+    fn youtube_prompt_schedules_search_without_filtering_library() {
+        let mut app = app(Vec::new());
+        app.filter = "local".into();
+        key(&mut app, KeyCode::Char('4'));
+        assert_eq!(app.tab, Tab::Youtube);
+        key(&mut app, KeyCode::Char('/'));
+        key(&mut app, KeyCode::Char('a'));
+        assert_eq!(app.yt_query, "a");
+        assert_eq!(app.filter, "local");
+        assert!(app.pending.is_none());
+        key(&mut app, KeyCode::Enter);
+        assert!(!app.searching);
+        assert!(matches!(app.pending, Some(NetworkAction::Search)));
+        assert_eq!(app.message.as_deref(), Some("Buscando…"));
+    }
+
+    #[test]
+    fn fifth_tab_defers_library_load_and_tab_click_cancels_prompt() {
+        let mut app = app(Vec::new());
+        key(&mut app, KeyCode::Char('/'));
+        assert!(app.searching);
+        app.set_tab(Tab::Playlists);
+        assert!(!app.searching);
+        assert!(matches!(app.pending, Some(NetworkAction::Library)));
+        app.pending = None;
+        app.library_loaded = true;
+        key(&mut app, KeyCode::Char('1'));
+        key(&mut app, KeyCode::Char('5'));
+        assert_eq!(app.tab, Tab::Playlists);
+        assert!(app.pending.is_none());
     }
 }
