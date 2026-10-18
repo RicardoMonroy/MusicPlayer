@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Meters from "./Meters.svelte";
   import { player, togglePause, next, prev } from "$lib/player.svelte";
 
   const playing = $derived(player.status.index != null && !player.status.paused);
@@ -31,9 +32,7 @@
       </div>
       <span class="side">A</span>
     </div>
-    <div class="bottom" data-tauri-drag-region>
-      {#each [0, 1, 2, 3] as _}<b></b>{/each}
-    </div>
+    <Meters />
   </div>
 
   <div class="keys">
@@ -157,19 +156,6 @@
       rotate: -360deg;
     }
   }
-  .bottom {
-    display: flex;
-    justify-content: center;
-    gap: 40px;
-    margin-top: 12px;
-  }
-  .bottom b {
-    width: 12px;
-    height: 12px;
-    border-radius: 50%;
-    background: #111;
-    box-shadow: inset 0 1px 2px #000;
-  }
   .keys {
     display: flex;
     justify-content: center;
@@ -198,5 +184,9 @@
     box-shadow:
       0 1px 0 #6e6e74,
       0 2px 4px rgba(0, 0, 0, 0.6);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .spin { animation: none; }
+    .tape, .keys button { transition: none; }
   }
 </style>

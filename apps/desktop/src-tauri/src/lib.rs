@@ -174,6 +174,7 @@ pub fn run() {
             app.manage(yt);
             tray::build(app.handle())?;
             media::spawn(app.handle().clone());
+            media::spawn_spectrum(app.handle().clone());
             Ok(())
         })
         // Closing a window hides it to the tray; quit from the tray menu.

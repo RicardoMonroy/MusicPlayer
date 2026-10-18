@@ -29,6 +29,8 @@ export const player = $state({
   accent: "120, 120, 160",
   /** Short-lived warning, e.g. a track mpv could not load and skipped. */
   notice: "",
+  /** 19 band levels (0..1, low to high), pushed ~25×/s while the compact window is visible. */
+  spectrum: [] as number[],
 });
 
 let noticeTimer: ReturnType<typeof setTimeout> | undefined;
@@ -99,9 +101,11 @@ export function connect() {
     clearTimeout(noticeTimer);
     noticeTimer = setTimeout(() => (player.notice = ""), 7000);
   });
+  const offSpectrum = listen<number[]>("spectrum", (e) => (player.spectrum = e.payload));
   return () => {
     off.then((f) => f());
     offFailed.then((f) => f());
+    offSpectrum.then((f) => f());
   };
 }
 

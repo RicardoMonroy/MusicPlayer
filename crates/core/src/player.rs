@@ -16,8 +16,44 @@ pub struct Status {
     pub volume: f64,
 }
 
+/// Number of spectrum bands, log-spaced from 40 Hz to 16 kHz.
+pub const BANDS: usize = 19;
+
 pub struct Player {
     mpv: Mpv,
+    visualizer: std::sync::atomic::AtomicBool,
+}
+
+/// Band-pass filter bank analysed by one `astats` (see docs/spikes/visualizer.md).
+/// Analysis copies are merged into extra channels, measured, then dropped by `pan`,
+/// so only the dry stereo signal reaches the output.
+// shortcut: forces a stereo dry path, so multichannel files are downmixed while it is on.
+fn visualizer_filter() -> String {
+    let n = BANDS;
+    let edges: Vec<f64> = (0..=n)
+        .map(|i| 40.0 * (16000.0_f64 / 40.0).powf(i as f64 / n as f64))
+        .collect();
+    let mut g = format!("aformat=channel_layouts=stereo,asplit={}[dry]", n + 1);
+    for i in 0..n {
+        g += &format!("[b{i}]");
+    }
+    for (i, w) in edges.windows(2).enumerate() {
+        let (lo, hi) = (w[0], w[1]);
+        g += &format!(
+            ";[b{i}]bandpass=f={:.1}:t=h:w={:.1}[f{i}]",
+            (lo * hi).sqrt(),
+            hi - lo
+        );
+    }
+    g += ";[dry]";
+    for i in 0..n {
+        g += &format!("[f{i}]");
+    }
+    g += &format!(
+        "amerge=inputs={},astats=metadata=1:reset=1:measure_perchannel=RMS_level:measure_overall=none,pan=stereo|c0=c0|c1=c1",
+        n + 1
+    );
+    format!("@viz:lavfi=[{g}]:o=[threads=1]")
 }
 
 impl Player {
@@ -33,7 +69,10 @@ impl Player {
             Ok(())
         })?;
         // State is read on demand; mpv's event queue is bounded, undrained events are dropped.
-        Ok(Self { mpv })
+        Ok(Self {
+            mpv,
+            visualizer: false.into(),
+        })
     }
 
     /// Replace the queue and start playing `uris[start]`.
@@ -80,6 +119,50 @@ impl Player {
     /// 0–100.
     pub fn set_volume(&self, volume: f64) -> Result<(), Error> {
         self.mpv.set_property("volume", volume.clamp(0.0, 100.0))
+    }
+
+    /// Turn the spectrum analyser on or off. Keep it off when nothing shows it: it costs CPU.
+    pub fn set_visualizer(&self, on: bool) -> Result<(), Error> {
+        use std::sync::atomic::Ordering::SeqCst;
+        if self.visualizer.swap(on, SeqCst) == on {
+            return Ok(());
+        }
+        let r = if on {
+            self.mpv.command("af", &["add", &visualizer_filter()])
+        } else {
+            self.mpv.command("af", &["remove", "@viz"])
+        };
+        if r.is_err() {
+            self.visualizer.store(false, SeqCst);
+        }
+        r
+    }
+
+    /// Latest band levels, low to high, 0..1. None when the analyser is off, idle,
+    /// or its filter could not start. Bars run a few hundred ms ahead of what you hear.
+    pub fn spectrum(&self) -> Option<Vec<f32>> {
+        if !self.visualizer.load(std::sync::atomic::Ordering::SeqCst) {
+            return None;
+        }
+        let db = |ch: usize| {
+            let key = format!("af-metadata/viz/by-key/lavfi.astats.{ch}.RMS_level");
+            // "-inf" (silence) parses to negative infinity, which adds no power.
+            self.mpv
+                .get_property::<String>(&key)
+                .ok()?
+                .parse::<f32>()
+                .ok()
+        };
+        (0..BANDS)
+            .map(|i| {
+                // Channels 1-2 are the dry signal; band i is channels 3+2i and 4+2i.
+                // Average powers, not samples, so opposite-phase stereo does not cancel.
+                let power =
+                    (10f32.powf(db(3 + 2 * i)? / 10.0) + 10f32.powf(db(4 + 2 * i)? / 10.0)) / 2.0;
+                let level = 10.0 * power.max(1e-12).log10();
+                Some(((level + 60.0) / 50.0).clamp(0.0, 1.0))
+            })
+            .collect()
     }
 
     /// Queue indexes that failed to load since the last call (e.g. a YouTube track
@@ -158,6 +241,31 @@ mod tests {
         assert!(p.status().paused);
         p.set_volume(150.0).unwrap();
         assert_eq!(p.status().volume, 100.0);
+    }
+
+    #[test]
+    fn spectrum_peaks_at_the_tone_band() {
+        let p = Player::new().unwrap();
+        p.mpv.set_property("ao", "null").unwrap();
+        assert_eq!(p.spectrum(), None, "off by default");
+        p.set_visualizer(true).unwrap();
+        p.set_visualizer(true).unwrap();
+        p.play_queue(&["av://lavfi:sine=frequency=1000:duration=10".into()], 0)
+            .unwrap();
+        thread::sleep(Duration::from_millis(1200));
+        let bands = p.spectrum().expect("analyser running");
+        assert_eq!(bands.len(), BANDS);
+        let peak = (0..BANDS)
+            .max_by(|&a, &b| bands[a].total_cmp(&bands[b]))
+            .unwrap();
+        // 1 kHz falls in band 10 of 19 (edges 40 Hz..16 kHz, log-spaced).
+        assert_eq!(peak, 10, "{bands:?}");
+        assert!(
+            p.status().duration > 0.0,
+            "audio still plays through the filter"
+        );
+        p.set_visualizer(false).unwrap();
+        assert_eq!(p.spectrum(), None);
     }
 
     #[test]

@@ -82,6 +82,8 @@ pub struct App {
     pub yt_query: String,
     pub pending: Option<NetworkAction>,
     pub message: Option<String>,
+    /// Smoothed spectrum bars shown in the now-playing panel.
+    pub bars: [f32; mp_core::player::BANDS],
     /// Short-lived warning in the now-playing panel, e.g. a track that failed to load.
     pub notice: Option<(String, Instant)>,
     pub library_loaded: bool,
@@ -137,6 +139,7 @@ impl App {
             pending: None,
             message: None,
             notice: None,
+            bars: Default::default(),
             library_loaded: false,
             logged_in: false,
             player,
@@ -155,8 +158,18 @@ impl App {
         }
     }
 
+    pub fn is_playing(&self) -> bool {
+        self.status.index.is_some() && !self.status.paused
+    }
+
     pub fn tick(&mut self) {
         self.status = self.player.status();
+        let target = self.player.spectrum().filter(|_| self.is_playing());
+        for (i, bar) in self.bars.iter_mut().enumerate() {
+            let t = target.as_ref().map_or(0.0, |b| b[i]);
+            // Jump up, fall slowly, so bars read like a hardware analyser.
+            *bar = if t > *bar { t } else { *bar * 0.85 + t * 0.15 };
+        }
         while let Ok(result) = self.net.1.try_recv() {
             self.apply_network(result);
         }

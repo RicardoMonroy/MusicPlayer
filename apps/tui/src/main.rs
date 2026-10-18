@@ -20,6 +20,8 @@ use ratatui::crossterm::{
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let folder = pick_folder();
     let player = Player::new().map_err(|e| format!("libmpv failed to start: {e}"))?;
+    // The TUI always shows the spectrum; without the needed ffmpeg filters it just stays flat.
+    let _ = player.set_visualizer(true);
     let mut app = App::new(player, folder);
 
     let mut terminal = ratatui::init();
@@ -50,7 +52,9 @@ fn run(
         app.tick();
         terminal.draw(|f| ui::draw(f, app))?;
         app.run_pending();
-        if event::poll(Duration::from_millis(250))? {
+        // ~25 fps while the spectrum moves, 4 fps when idle.
+        let frame = if app.is_playing() { 40 } else { 250 };
+        if event::poll(Duration::from_millis(frame))? {
             match event::read()? {
                 Event::Key(k) if k.kind == KeyEventKind::Press => on_key(app, k),
                 Event::Mouse(m) => on_mouse(app, m),

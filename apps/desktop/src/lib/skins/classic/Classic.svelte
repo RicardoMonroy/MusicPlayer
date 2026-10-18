@@ -28,16 +28,14 @@
     observer.observe(titleText);
     let frame = 0;
     let previous = 0;
-    const phases = Array.from({ length: 19 }, () => Math.random() * Math.PI * 2);
-    // shortcut: fake spectrum, feed real FFT from mpv when available
+    // Real bands from mpv (player.spectrum); fast attack, slower fall like a hardware analyser.
     function animate(time: number) {
       const delta = Math.min((time - previous) / 1000 || 0, 0.05);
       previous = time;
       levels = levels.map((level, i) => {
-        const target = playing
-          ? 0.12 + 0.88 * Math.abs(Math.sin(time * 0.0023 + phases[i]) * Math.cos(time * 0.0011 + i * 0.7))
-          : 0;
-        return Math.max(0, level + (target - level) * Math.min(1, delta * (playing ? 12 : 9)) - (playing ? 0 : delta * 0.15));
+        const target = playing ? (player.spectrum[i] ?? 0) : 0;
+        const rate = target > level ? 25 : 5;
+        return level + (target - level) * Math.min(1, delta * rate);
       });
       frame = requestAnimationFrame(animate);
     }

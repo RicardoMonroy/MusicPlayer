@@ -54,7 +54,7 @@ Queue = mpv playlist (gapless, auto-advance for free). The UI polls player statu
 3. **M2 compact + skins**: compact window, skin system, Cassette/Vinyl/Classic, tray popup, media keys.
 4. **M3 TUI**: ratatui client on the same core.
 5. **M4 YouTube Music**: search, library, playlists, playback.
-6. **M5 polish**: done — skipped-track notices (mpv end-file errors), shared music folder, SQLite tag cache, lyrics (YouTube Music + embedded/.lrc), MPRIS cover art, non-blocking TUI network, responsive TUI buttons, PKGBUILD + release workflow (see packaging/README.md). Pending — real visualizer (see docs/spikes/visualizer.md), ReplayGain, list virtualization.
+6. **M5 polish**: done — skipped-track notices (mpv end-file errors), shared music folder, SQLite tag cache, lyrics (YouTube Music + embedded/.lrc), MPRIS cover art, non-blocking TUI network, responsive TUI buttons, PKGBUILD + release workflow (see packaging/README.md). Real visualizer: 19-band lavfi analyser (`Player::set_visualizer`/`spectrum`), on only while the compact window is visible or the TUI runs; bars run a few hundred ms ahead of the audio (see docs/spikes/visualizer.md). Pending — ReplayGain, list virtualization, real-device sync check on Windows/macOS.
 7. **M6 Qobuz**, then Amazon decision.
 
 ## Delegation to Codex (candidates)

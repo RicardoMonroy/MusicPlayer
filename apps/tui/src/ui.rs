@@ -305,16 +305,20 @@ fn draw_now(f: &mut Frame, app: &mut App, area: Rect) {
     // Narrow terminals get icon-only buttons so labels never get clipped.
     let narrow = controls.width < 96;
     let (bw, pw) = if narrow { (9, 11) } else { (16, 18) };
-    let [b0, b1, b2, _, vol_label, vol] = Layout::horizontal([
+    let [b0, b1, b2, viz, vol_label, vol] = Layout::horizontal([
         Constraint::Length(bw),
         Constraint::Length(pw),
         Constraint::Length(bw),
         Constraint::Fill(1),
         Constraint::Length(10),
-        Constraint::Max(24),
+        Constraint::Max(16),
     ])
     .spacing(1)
     .areas(controls);
+
+    if viz.width >= 5 {
+        f.render_widget(spectrum(&app.bars, viz), viz);
+    }
 
     let playing = s.index.is_some() && !s.paused;
     let pick = |full: &'static str, icon: &'static str| if narrow { icon } else { full };
@@ -362,6 +366,46 @@ fn draw_now(f: &mut Frame, app: &mut App, area: Rect) {
         vol_bar,
     );
     app.areas.volume = vol_bar;
+}
+
+/// Vertical bars with eighth-block resolution, centred in `area`.
+/// Narrow areas merge neighbouring bands (loudest wins) so every band stays represented.
+fn spectrum(bands: &[f32], area: Rect) -> Paragraph<'static> {
+    const STEPS: [char; 9] = [' ', '▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+    let n = bands.len().min((area.width as usize).div_ceil(2)).max(1);
+    let bars: Vec<f32> = (0..n)
+        .map(|i| {
+            let (lo, hi) = (
+                i * bands.len() / n,
+                ((i + 1) * bands.len() / n).max(i * bands.len() / n + 1),
+            );
+            bands[lo..hi].iter().copied().fold(0.0, f32::max)
+        })
+        .collect();
+    let col = ((area.width as usize + 1) / bars.len()).clamp(2, 3) - 1;
+    let used = bars.len() * (col + 1) - 1;
+    let pad = " ".repeat((area.width as usize).saturating_sub(used) / 2);
+    let rows = area.height as usize;
+    let lines = (0..rows)
+        .map(|row| {
+            // Row 0 is the top; each row holds 8 eighths of the bar height.
+            let floor = (rows - 1 - row) * 8;
+            let mut spans = vec![Span::raw(pad.clone())];
+            for (i, &v) in bars.iter().enumerate() {
+                let eighths = (v.clamp(0.0, 1.0) * (rows * 8) as f32).round() as usize;
+                let ch = STEPS[eighths.saturating_sub(floor).min(8)];
+                // Low bands warm, high bands cool, like the desktop accent.
+                let hue = i as f32 / (bars.len().max(2) - 1) as f32;
+                let color =
+                    Color::Rgb(255, (110.0 + 90.0 * hue) as u8, (150.0 + 100.0 * hue) as u8);
+                spans.push(Span::raw(ch.to_string().repeat(col)).fg(color));
+                spans.push(Span::raw(" "));
+            }
+            spans.pop();
+            Line::from(spans)
+        })
+        .collect::<Vec<_>>();
+    Paragraph::new(lines)
 }
 
 /// One-line bar; ratatui's Gauge leaves a gap for its centered label.
@@ -459,5 +503,47 @@ mod tests {
         assert_eq!(a.areas.tabs.len(), 5);
         assert!(a.areas.buttons.iter().all(|r| r.height == 3));
         assert!(a.areas.progress.width > 0 && a.areas.volume.width > 0);
+    }
+
+    #[test]
+    fn spectrum_bars_fill_from_the_bottom() {
+        let mut bars = [0.0; 19];
+        bars[0] = 1.0;
+        bars[18] = 0.5;
+        let p = spectrum(&bars, Rect::new(0, 0, 38, 3));
+        let mut term = Terminal::new(TestBackend::new(38, 3)).unwrap();
+        term.draw(|f| f.render_widget(p, f.area())).unwrap();
+        let b = term.backend().buffer();
+        assert_eq!(b[(0, 0)].symbol(), "█", "full bar reaches the top");
+        assert_eq!(b[(0, 2)].symbol(), "█");
+        let last = 18 * 2;
+        assert_eq!(
+            b[(last, 0)].symbol(),
+            " ",
+            "half bar stays below the top row"
+        );
+        assert_eq!(b[(last, 2)].symbol(), "█");
+        assert_eq!(b[(2, 2)].symbol(), " ", "silent band is empty");
+    }
+
+    #[test]
+    fn narrow_spectrum_merges_bands() {
+        let mut bars = [0.0; 19];
+        bars[18] = 1.0;
+        let mut term = Terminal::new(TestBackend::new(9, 1)).unwrap();
+        term.draw(|f| f.render_widget(spectrum(&bars, f.area()), f.area()))
+            .unwrap();
+        let row: String = term
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        assert_eq!(
+            row.trim_end(),
+            "        █",
+            "5 bars; the top band survives in the last one"
+        );
     }
 }

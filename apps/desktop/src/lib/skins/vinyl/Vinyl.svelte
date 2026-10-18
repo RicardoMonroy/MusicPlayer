@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Spectrum from "./Spectrum.svelte";
   import { player, togglePause, next, prev } from "$lib/player.svelte";
 
   const playing = $derived(player.status.index != null && !player.status.paused);
@@ -19,6 +20,8 @@
       </div>
     </div>
   </div>
+
+  <Spectrum />
 
   <div class="arm" style="rotate: {armAngle}deg">
     <div class="pivot"></div>
@@ -122,6 +125,7 @@
     }
   }
   .arm {
+    z-index: 1;
     position: absolute;
     left: 322px;
     top: 34px;
@@ -213,5 +217,9 @@
   svg {
     width: 20px;
     fill: currentColor;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .spin { animation: none; }
+    .arm { transition: none; }
   }
 </style>
