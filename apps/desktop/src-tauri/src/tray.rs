@@ -8,6 +8,9 @@ use mp_core::player::Player;
 
 /// Show one view (`main` or `compact`) and hide the other.
 pub fn show(app: &AppHandle, label: &str) {
+    if label == "compact" {
+        crate::wm::prepare_compact();
+    }
     for w in app.webview_windows().values() {
         if w.label() == label {
             let _ = w.show();
@@ -16,6 +19,9 @@ pub fn show(app: &AppHandle, label: &str) {
         } else {
             let _ = w.hide();
         }
+    }
+    if label == "compact" {
+        crate::wm::restore_compact_size(app);
     }
 }
 

@@ -95,6 +95,13 @@ impl Player {
             .set_property("ytdl-raw-options", value.unwrap_or_default())
     }
 
+    /// Play queue entry `index` (as passed to `play_queue`).
+    pub fn jump(&self, index: usize) -> Result<(), Error> {
+        self.mpv.set_property("pause", false)?;
+        self.mpv
+            .command("playlist-play-index", &[&index.to_string()])
+    }
+
     pub fn toggle_pause(&self) -> Result<(), Error> {
         self.mpv.command("cycle", &["pause"])
     }

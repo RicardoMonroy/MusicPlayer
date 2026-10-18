@@ -31,6 +31,8 @@ export const player = $state({
   notice: "",
   /** 19 band levels (0..1, low to high), pushed ~25×/s while the compact window is visible. */
   spectrum: [] as number[],
+  /** What is playing, in order; `status.index` points into it. */
+  queue: [] as Track[],
 });
 
 let noticeTimer: ReturnType<typeof setTimeout> | undefined;
@@ -57,6 +59,7 @@ export const prev = () => invoke("prev");
 export const seek = (seconds: number) => invoke("seek", { seconds });
 export const setVolume = (volume: number) => invoke("set_volume", { volume });
 
+export const jump = (index: number) => invoke("jump", { index });
 export const showView = (label: "main" | "compact") => invoke("show_view", { label });
 
 async function loadCover(track: Track | null) {
@@ -95,6 +98,8 @@ function apply(now: Now) {
 /** Follow player state pushed from Rust. Returns the unsubscribe function. */
 export function connect() {
   invoke<Now>("now").then(apply);
+  invoke<Track[]>("queue").then((q) => (player.queue = q));
+  const offQueue = listen<Track[]>("queue", (e) => (player.queue = e.payload));
   const off = listen<Now>("now", (e) => apply(e.payload));
   const offFailed = listen<Track>("track-failed", (e) => {
     player.notice = `No se pudo reproducir “${e.payload.title}”; se saltó. ¿Requiere iniciar sesión?`;
@@ -106,6 +111,7 @@ export function connect() {
     off.then((f) => f());
     offFailed.then((f) => f());
     offSpectrum.then((f) => f());
+    offQueue.then((f) => f());
   };
 }
 

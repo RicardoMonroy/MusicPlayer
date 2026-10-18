@@ -14,6 +14,8 @@
   } from "$lib/player.svelte";
   import Local from "$lib/views/Local.svelte";
   import YouTube from "$lib/views/YouTube.svelte";
+  import { listen } from "@tauri-apps/api/event";
+  import { skins, savedSkin, chooseSkin } from "$lib/skins";
 
   type View = "local" | "youtube";
   const VIEW_KEY = "view";
@@ -37,6 +39,14 @@
   });
 
   $effect(() => connect());
+
+  let skinId = $state(savedSkin().id);
+  $effect(() => {
+    const off = listen<string>("skin", (e) => (skinId = e.payload));
+    return () => {
+      off.then((f) => f());
+    };
+  });
   $effect(() => localStorage.setItem(VIEW_KEY, view));
 
   function onKey(e: KeyboardEvent) {
@@ -61,6 +71,21 @@
       <svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20m0 18a8 8 0 1 1 0-16 8 8 0 0 1 0 16m-2-12.5v9l6-4.5z" /></svg>
       YouTube Music
     </button>
+    <div class="skins">
+      <span>Skin del mini reproductor</span>
+      <div class="seg" role="radiogroup">
+        {#each skins as s (s.id)}
+          <button
+            role="radio"
+            aria-checked={s.id === skinId}
+            class:on={s.id === skinId}
+            onclick={() => chooseSkin(s.id)}
+          >
+            {s.name}
+          </button>
+        {/each}
+      </div>
+    </div>
     <button class="mini" onclick={() => showView("compact")}>
       <svg viewBox="0 0 24 24"><path d="M19 11h-8v6h8zm4 8V5a2 2 0 0 0-2-2H3a2 2 0 0 0-2 2v14c0 1.1.9 2 2 2h18a2 2 0 0 0 2-2m-2 0H3V5h18z" /></svg>
       Mini reproductor
@@ -214,8 +239,36 @@
   .side svg {
     width: 20px;
   }
-  .side .mini {
+  .skins {
     margin-top: auto;
+    padding: 0 4px 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .skins > span {
+    color: var(--fg-dim);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    padding-left: 8px;
+  }
+  .seg {
+    display: flex;
+    background: #17171d;
+    border-radius: 8px;
+    padding: 3px;
+  }
+  .side .seg button {
+    flex: 1;
+    justify-content: center;
+    padding: 6px 4px;
+    font-size: 12px;
+    border-radius: 6px;
+  }
+  .side .seg button.on {
+    background: rgba(var(--accent), 0.3);
+    color: #fff;
   }
 
   .now {

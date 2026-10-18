@@ -25,7 +25,7 @@
         "height": 220,
         "decorations": false,
         "transparent": true,
-        "resizable": false,
+        "resizable": true,
         "alwaysOnTop": true,
         "visible": false,
         "skipTaskbar": true,
@@ -45,7 +45,10 @@
     "shortDescription": "Local and YouTube Music player",
     "linux": {
       "deb": {
-        "depends": ["libmpv2", "yt-dlp"]
+        "depends": [
+          "libmpv2",
+          "yt-dlp"
+        ]
       }
     },
     "icon": [

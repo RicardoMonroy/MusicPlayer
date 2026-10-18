@@ -1,11 +1,12 @@
 mod media;
 mod tray;
+mod wm;
 
 use std::{path::PathBuf, sync::Mutex};
 
 use mp_core::{Track, player::Player};
 use mp_ytmusic::{Kind, Library, SearchResults, YtMusic};
-use tauri::{AppHandle, Manager, State, WindowEvent, ipc::Response};
+use tauri::{AppHandle, Emitter, Manager, State, WindowEvent, ipc::Response};
 
 /// What mpv is playing, in order; `Status::index` points into it.
 pub type Queue = Mutex<Vec<Track>>;
@@ -35,11 +36,30 @@ async fn scan_folder(path: PathBuf) -> CmdResult<Vec<Track>> {
 
 /// Replace the queue with `tracks` and start at `index`.
 #[tauri::command]
-fn play(tracks: Vec<Track>, index: usize, queue: State<Queue>, player: State<Player>) -> CmdResult {
+fn play(
+    tracks: Vec<Track>,
+    index: usize,
+    queue: State<Queue>,
+    player: State<Player>,
+    app: AppHandle,
+) -> CmdResult {
     let uris: Vec<String> = tracks.iter().map(|t| t.uri.clone()).collect();
     player.play_queue(&uris, index).map_err(err)?;
+    let _ = app.emit("queue", &tracks);
     *queue.lock().unwrap() = tracks;
     Ok(())
+}
+
+/// The current queue, for a window that just opened (later changes arrive as `queue` events).
+#[tauri::command]
+fn queue(queue: State<Queue>) -> Vec<Track> {
+    queue.lock().unwrap().clone()
+}
+
+/// Play queue entry `index`.
+#[tauri::command]
+fn jump(index: usize, player: State<Player>) -> CmdResult {
+    player.jump(index).map_err(err)
 }
 
 #[tauri::command]
@@ -71,6 +91,12 @@ fn set_volume(volume: f64, player: State<Player>) -> CmdResult {
 #[tauri::command]
 fn now(app: AppHandle) -> media::Now {
     media::now(&app)
+}
+
+/// Size the mini player window (skin + optional playlist).
+#[tauri::command]
+fn resize_compact(width: f64, height: f64, app: AppHandle) {
+    wm::resize_compact(&app, width, height);
 }
 
 /// Switch between the full (`main`) and `compact` views.
@@ -186,6 +212,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             scan_folder,
+            queue,
+            jump,
             music_folder,
             play,
             toggle_pause,
@@ -195,6 +223,7 @@ pub fn run() {
             set_volume,
             now,
             show_view,
+            resize_compact,
             cover,
             lyrics,
             yt_search,
@@ -205,6 +234,13 @@ pub fn run() {
             yt_library,
             yt_liked
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while running tauri application")
+        .run(|_, event| {
+            // Background threads keep using mpv until the process ends; exiting here
+            // skips the destructor that would free mpv under them.
+            if let tauri::RunEvent::Exit = event {
+                std::process::exit(0);
+            }
+        });
 }

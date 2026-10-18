@@ -8,12 +8,27 @@
  * The component fills the whole window (width x height, transparent outside
  * its own shape) and marks drag areas with `data-tauri-drag-region`.
  * The compact page draws the shared chrome (skin switcher, expand, hide) on hover
- * in the top-right corner, so keep that 80x24 px area free of controls.
+ * in the top-right corner, so keep that 104x24 px area free of controls.
+ * `playlist` themes the queue panel the compact page can unfold below the skin.
  */
 import type { Component } from "svelte";
+import { emit } from "@tauri-apps/api/event";
 import { skin as cassette } from "./cassette";
 import { skin as vinyl } from "./vinyl";
 import { skin as classic } from "./classic";
+
+/** Colors and font for the shared playlist panel shown under the skin. */
+export type PlaylistTheme = {
+  bg: string;
+  fg: string;
+  dim: string;
+  /** Current track text color. */
+  current: string;
+  /** Hover/selection background. */
+  hover: string;
+  border: string;
+  font: string;
+};
 
 export type Skin = {
   id: string;
@@ -21,7 +36,11 @@ export type Skin = {
   width: number;
   height: number;
   component: Component;
+  playlist: PlaylistTheme;
 };
+
+/** Extra window height while the playlist is open. */
+export const PLAYLIST_HEIGHT = 260;
 
 export const skins: Skin[] = [cassette, vinyl, classic];
 
@@ -31,8 +50,10 @@ export function savedSkin(): Skin {
   return skins.find((s) => s.id === localStorage.getItem(KEY)) ?? skins[0];
 }
 
-export function nextSkin(current: Skin): Skin {
-  const s = skins[(skins.indexOf(current) + 1) % skins.length];
-  localStorage.setItem(KEY, s.id);
-  return s;
+export const skinById = (id: string) => skins.find((s) => s.id === id) ?? skins[0];
+
+/** Choose the mini player skin; every window hears about it through the `skin` event. */
+export function chooseSkin(id: string) {
+  localStorage.setItem(KEY, id);
+  emit("skin", id);
 }
