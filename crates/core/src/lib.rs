@@ -9,6 +9,11 @@ pub struct Track {
     pub album: String,
     /// Local path or stream URL, whatever the player can open.
     pub uri: String,
+    pub track_no: Option<u32>,
+    /// Seconds.
+    pub duration: Option<f64>,
 }
 
 pub const APP_NAME: &str = "MusicPlayer";
+
+pub mod player;

@@ -1,6 +1,6 @@
 # Plan — MusicPlayer
 
-Status: draft, pending user approval of the stack (2026-10-18).
+Status: stack approved 2026-10-18. M0 done. M1 in progress.
 
 ## Stack
 
@@ -8,7 +8,7 @@ Status: draft, pending user approval of the stack (2026-10-18).
 |---|---|---|
 | Core | Rust workspace | One engine shared by GUI and TUI. |
 | Playback | libmpv (`libmpv2` crate) | Plays mp3/flac/ogg/opus/m4a/wav, gapless, ReplayGain, and YouTube streams through yt-dlp. Available on all three OS. |
-| Tags/library | `lofty` + SQLite (`rusqlite`) | Fast tag reading, covers, persistent library. |
+| Tags/library | `lofty` (+ SQLite cache later) | Fast tag reading, covers. M1 rescans the folder on start; add SQLite when big libraries make startup slow. |
 | Desktop UI | Tauri v2 + Svelte + TypeScript | Skins are HTML/CSS/Canvas: easy cassette, vinyl and Winamp looks. Small binaries. |
 | Tray / media keys | Tauri tray + popup window; `souvlaki` (MPRIS on Linux, SMTC on Windows, Now Playing on macOS) | Native controls everywhere. |
 | TUI | `ratatui` + `crossterm` | Same core, large mouse-clickable controls. |
@@ -25,7 +25,7 @@ apps/desktop        Tauri v2: full view, compact view, tray popup
 apps/tui            ratatui client
 ```
 
-All sources implement one `Provider` trait: `search`, `browse`, `resolve_stream(track) -> url/path`. The player only sees a URL or a path.
+Queue = mpv playlist (gapless, auto-advance for free). The UI polls player status ~4x/s. Sources will implement one `Provider` trait (add it with the second provider): `search`, `browse`, `resolve_stream(track) -> url/path`. The player only sees a URL or a path.
 
 ## Views
 

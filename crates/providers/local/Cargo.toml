@@ -1,0 +1,13 @@
+[package]
+name = "mp-local"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+mp-core = { path = "../../core" }
+lofty = "0.25"
+walkdir = "2"
+
+[dev-dependencies]
+tempfile = "3"
