@@ -14,6 +14,9 @@ pub struct Status {
     pub position: f64,
     pub duration: f64,
     pub volume: f64,
+    pub shuffle: bool,
+    /// "off", "all" (whole queue) or "one" (current track).
+    pub repeat: String,
 }
 
 /// Number of spectrum bands, log-spaced from 40 Hz to 16 kHz.
@@ -22,6 +25,8 @@ pub const BANDS: usize = 19;
 pub struct Player {
     mpv: Mpv,
     visualizer: std::sync::atomic::AtomicBool,
+    equalizer: std::sync::atomic::AtomicBool,
+    shuffle: std::sync::atomic::AtomicBool,
 }
 
 /// Band-pass filter bank analysed by one `astats` (see docs/spikes/visualizer.md).
@@ -71,10 +76,15 @@ impl Player {
             Ok(())
         })?;
         // State is read on demand; mpv's event queue is bounded, undrained events are dropped.
-        Ok(Self {
+        let player = Self {
             mpv,
             visualizer: false.into(),
-        })
+            equalizer: false.into(),
+            shuffle: false.into(),
+        };
+        // A broken saved setting must not stop the player from starting.
+        let _ = player.set_equalizer(&crate::config::equalizer());
+        Ok(player)
     }
 
     /// Replace the queue and start playing `uris[start]`.
@@ -95,6 +105,95 @@ impl Player {
         let value = path.map(|p| format!("cookies={}", p.display()));
         self.mpv
             .set_property("ytdl-raw-options", value.unwrap_or_default())
+    }
+
+    /// Apply equalizer settings. Gain changes on a running equalizer are sent to
+    /// the live filters, so moving a slider does not interrupt playback.
+    pub fn set_equalizer(&self, eq: &crate::eq::Equalizer) -> Result<(), Error> {
+        use std::sync::atomic::Ordering::SeqCst;
+        let eq = eq.clone().clamped();
+        if !eq.enabled {
+            if self.equalizer.swap(false, SeqCst) {
+                self.mpv.command("af", &["remove", "@eq"])?;
+            }
+            return Ok(());
+        }
+        if !self.equalizer.swap(true, SeqCst) {
+            // `pre`: before the visualizer, so the bars show the equalized sound.
+            return self
+                .mpv
+                .command("af", &["pre", &crate::eq::filter(&eq)])
+                .inspect_err(|_| self.equalizer.store(false, SeqCst));
+        }
+        let live = self
+            .mpv
+            .command(
+                "af-command",
+                &[
+                    "eq",
+                    "volume",
+                    &format!("{}dB", crate::eq::headroom_preamp(&eq)),
+                    "volume@pre",
+                ],
+            )
+            .and_then(|_| {
+                eq.gains.iter().enumerate().try_for_each(|(i, g)| {
+                    self.mpv.command(
+                        "af-command",
+                        &["eq", "g", &g.to_string(), &format!("equalizer@b{i}")],
+                    )
+                })
+            });
+        if live.is_err() {
+            // The filter chain may still be (re)building, e.g. right after a track
+            // change; rebuild it with the new gains instead.
+            self.mpv.command("af", &["remove", "@eq"])?;
+            self.mpv.command("af", &["pre", &crate::eq::filter(&eq)])?;
+        }
+        Ok(())
+    }
+
+    /// Winamp-style stop: pause and rewind the current track.
+    pub fn stop(&self) -> Result<(), Error> {
+        self.mpv.set_property("pause", true)?;
+        self.seek(0.0)
+    }
+
+    /// Shuffle or restore the queue order. The caller must re-read `playlist_uris`
+    /// afterwards, because queue indexes change.
+    pub fn set_shuffle(&self, on: bool) -> Result<(), Error> {
+        self.shuffle.store(on, std::sync::atomic::Ordering::SeqCst);
+        self.mpv.command(
+            if on {
+                "playlist-shuffle"
+            } else {
+                "playlist-unshuffle"
+            },
+            &[],
+        )
+    }
+
+    /// "off", "all" or "one".
+    pub fn set_repeat(&self, mode: &str) -> Result<(), Error> {
+        let (playlist, file) = match mode {
+            "all" => ("inf", "no"),
+            "one" => ("no", "inf"),
+            _ => ("no", "no"),
+        };
+        self.mpv.set_property("loop-playlist", playlist)?;
+        self.mpv.set_property("loop-file", file)
+    }
+
+    /// The queue in mpv's current order.
+    pub fn playlist_uris(&self) -> Vec<String> {
+        let n = self.mpv.get_property::<i64>("playlist-count").unwrap_or(0);
+        (0..n)
+            .filter_map(|i| {
+                self.mpv
+                    .get_property::<String>(&format!("playlist/{i}/filename"))
+                    .ok()
+            })
+            .collect()
     }
 
     /// "no", "track" or "album"; applies from the next track on.
@@ -224,6 +323,23 @@ impl Player {
             position: f("time-pos"),
             duration: f("duration"),
             volume: f("volume"),
+            shuffle: self.shuffle.load(std::sync::atomic::Ordering::SeqCst),
+            repeat: if self
+                .mpv
+                .get_property::<String>("loop-file")
+                .is_ok_and(|v| v != "no")
+            {
+                "one"
+            } else if self
+                .mpv
+                .get_property::<String>("loop-playlist")
+                .is_ok_and(|v| v != "no")
+            {
+                "all"
+            } else {
+                "off"
+            }
+            .into(),
         }
     }
 }
@@ -280,6 +396,50 @@ mod tests {
         );
         p.set_visualizer(false).unwrap();
         assert_eq!(p.spectrum(), None);
+    }
+
+    #[test]
+    fn equalizer_cuts_the_band_live() {
+        let p = Player::new().unwrap();
+        p.mpv.set_property("ao", "null").unwrap();
+        p.set_equalizer(&Default::default()).unwrap();
+        p.set_visualizer(true).unwrap();
+        p.play_queue(&["av://lavfi:sine=frequency=1000:duration=20".into()], 0)
+            .unwrap();
+        thread::sleep(Duration::from_millis(1000));
+        let before = p.spectrum().unwrap()[10];
+        let mut eq = crate::eq::Equalizer {
+            enabled: true,
+            ..Default::default()
+        };
+        p.set_equalizer(&eq).unwrap();
+        eq.gains[4] = -12.0; // 1 kHz band
+        p.set_equalizer(&eq).unwrap(); // live update via af-command
+        thread::sleep(Duration::from_millis(1000));
+        let after = p.spectrum().unwrap()[10];
+        assert!(
+            after < before - 0.15,
+            "1 kHz before {before}, after {after}"
+        );
+        eq.enabled = false;
+        p.set_equalizer(&eq).unwrap();
+        assert!(p.status().duration > 0.0);
+    }
+
+    #[test]
+    fn repeat_and_stop() {
+        let p = Player::new().unwrap();
+        p.mpv.set_property("ao", "null").unwrap();
+        p.play_queue(&["av://lavfi:sine=duration=20".into()], 0)
+            .unwrap();
+        thread::sleep(Duration::from_millis(500));
+        for mode in ["one", "all", "off"] {
+            p.set_repeat(mode).unwrap();
+            assert_eq!(p.status().repeat, mode);
+        }
+        // lavfi sources cannot seek, so only the pause half is checked here.
+        p.stop().ok();
+        assert!(p.status().paused);
     }
 
     #[test]

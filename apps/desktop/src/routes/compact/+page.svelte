@@ -5,10 +5,10 @@
   import { connect, showView, player } from "$lib/player.svelte";
   import { savedSkin, skins, skinById, chooseSkin, PLAYLIST_HEIGHT } from "$lib/skins";
   import Playlist from "$lib/Playlist.svelte";
+  import { compact } from "$lib/compact.svelte";
 
   let skin = $state.raw(savedSkin());
-  const PLAYLIST_KEY = "compact-playlist";
-  let showPlaylist = $state(localStorage.getItem(PLAYLIST_KEY) === "1");
+
   let picking = $state(false);
   const win = getCurrentWindow();
 
@@ -21,10 +21,14 @@
 
   $effect(() => connect());
   $effect(() => {
-    localStorage.setItem(PLAYLIST_KEY, showPlaylist ? "1" : "0");
+    localStorage.setItem("compact-playlist", compact.playlist ? "1" : "0");
+    localStorage.setItem("compact-eq", compact.eq ? "1" : "0");
     invoke("resize_compact", {
       width: skin.width,
-      height: skin.height + (showPlaylist ? PLAYLIST_HEIGHT : 0),
+      height:
+        skin.height +
+        (compact.eq ? skin.equalizer.height : 0) +
+        (compact.playlist ? PLAYLIST_HEIGHT : 0),
     });
   });
 </script>
@@ -33,12 +37,20 @@
   <div class="skin" style:height="{skin.height}px">
     <skin.component />
   </div>
-  {#if showPlaylist}
+  {#if compact.eq}
+    <div style:height="{skin.equalizer.height}px">
+      <skin.equalizer.component />
+    </div>
+  {/if}
+  {#if compact.playlist}
     <Playlist theme={skin.playlist} height={PLAYLIST_HEIGHT} />
   {/if}
   {#if player.notice}<div class="toast">{player.notice}</div>{/if}
   <nav>
-    <button title="Lista de reproducción" class:on={showPlaylist} onclick={() => (showPlaylist = !showPlaylist)}>
+    <button title="Ecualizador" class:on={compact.eq} onclick={() => (compact.eq = !compact.eq)}>
+      <svg viewBox="0 0 24 24"><path d="M4 18h2v-6H4zm5 0h2V6H9zm5 0h2v-9h-2zm5 0h2v-4h-2z" /></svg>
+    </button>
+    <button title="Lista de reproducción" class:on={compact.playlist} onclick={() => (compact.playlist = !compact.playlist)}>
       <svg viewBox="0 0 24 24"><path d="M3 5h12v2H3zm0 4h12v2H3zm0 4h8v2H3zm14 0v6l5-3z" /></svg>
     </button>
     <button title="Elegir skin" class:on={picking} onclick={() => (picking = !picking)}>

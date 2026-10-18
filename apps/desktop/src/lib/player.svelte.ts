@@ -17,14 +17,29 @@ export type Status = {
   position: number;
   duration: number;
   volume: number;
+  shuffle: boolean;
+  repeat: "off" | "all" | "one";
 };
+
+export type Equalizer = { enabled: boolean; preamp: number; gains: number[] };
+/** Band centre frequencies (Hz), as in Winamp. */
+export const EQ_FREQS = [60, 170, 310, 600, 1000, 3000, 6000, 12000, 14000, 16000];
+export const EQ_RANGE = 12;
 
 export type Now = { status: Status; track: Track | null };
 
 export const player = $state({
   tracks: [] as Track[],
   track: null as Track | null,
-  status: { index: null, paused: false, position: 0, duration: 0, volume: 100 } as Status,
+  status: {
+    index: null,
+    paused: false,
+    position: 0,
+    duration: 0,
+    volume: 100,
+    shuffle: false,
+    repeat: "off",
+  } as Status,
   coverUrl: "",
   accent: "120, 120, 160",
   /** Short-lived warning, e.g. a track mpv could not load and skipped. */
@@ -33,6 +48,8 @@ export const player = $state({
   spectrum: [] as number[],
   /** What is playing, in order; `status.index` points into it. */
   queue: [] as Track[],
+  eq: { enabled: false, preamp: 0, gains: Array(10).fill(0) } as Equalizer,
+  eqPresets: [] as [string, number[]][],
 });
 
 let noticeTimer: ReturnType<typeof setTimeout> | undefined;
@@ -60,6 +77,25 @@ export const seek = (seconds: number) => invoke("seek", { seconds });
 export const setVolume = (volume: number) => invoke("set_volume", { volume });
 
 export const jump = (index: number) => invoke("jump", { index });
+export const stop = () => invoke("stop");
+export const setShuffle = (on: boolean) => invoke("set_shuffle", { on });
+export const setRepeat = (mode: Status["repeat"]) => invoke("set_repeat", { mode });
+/** Cycle off → all → one, like Winamp's repeat button. */
+export const cycleRepeat = () =>
+  setRepeat(({ off: "all", all: "one", one: "off" } as const)[player.status.repeat]);
+
+let eqFrame = 0;
+/** Update the equalizer now in the UI; send to mpv at most once per frame (sliders fire fast). */
+export function setEqualizer(eq: Equalizer) {
+  player.eq = eq;
+  cancelAnimationFrame(eqFrame);
+  eqFrame = requestAnimationFrame(() => invoke("set_equalizer", { eq: $state.snapshot(player.eq) }));
+}
+
+export function applyPreset(name: string) {
+  const p = player.eqPresets.find(([n]) => n === name);
+  if (p) setEqualizer({ ...player.eq, enabled: true, gains: [...p[1]] });
+}
 export const showView = (label: "main" | "compact") => invoke("show_view", { label });
 
 async function loadCover(track: Track | null) {
@@ -99,6 +135,9 @@ function apply(now: Now) {
 export function connect() {
   invoke<Now>("now").then(apply);
   invoke<Track[]>("queue").then((q) => (player.queue = q));
+  invoke<Equalizer>("equalizer").then((e) => (player.eq = e));
+  invoke<[string, number[]][]>("eq_presets").then((p) => (player.eqPresets = p));
+  const offEq = listen<Equalizer>("equalizer", (e) => (player.eq = e.payload));
   const offQueue = listen<Track[]>("queue", (e) => (player.queue = e.payload));
   const off = listen<Now>("now", (e) => apply(e.payload));
   const offFailed = listen<Track>("track-failed", (e) => {
@@ -112,6 +151,7 @@ export function connect() {
     offFailed.then((f) => f());
     offSpectrum.then((f) => f());
     offQueue.then((f) => f());
+    offEq.then((f) => f());
   };
 }
 

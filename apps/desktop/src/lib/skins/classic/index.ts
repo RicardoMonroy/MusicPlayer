@@ -1,12 +1,15 @@
 import type { Skin } from "../index";
 import Classic from "./Classic.svelte";
 
+import Equalizer from "./Equalizer.svelte";
+
 export const skin: Skin = {
   id: "classic",
   name: "Clásica",
   width: 550,
   height: 232,
   component: Classic,
+  equalizer: { component: Equalizer, height: 210 },
   playlist: {
     bg: "#000000",
     fg: "#00e000",

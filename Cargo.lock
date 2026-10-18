@@ -2700,6 +2700,7 @@ dependencies = [
  "libmpv2",
  "libmpv2-sys",
  "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -2720,6 +2721,7 @@ dependencies = [
  "mp-core",
  "rustypipe",
  "serde",
+ "serde_json",
  "tokio",
 ]
 

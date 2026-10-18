@@ -94,6 +94,54 @@ fn now(app: AppHandle) -> media::Now {
 }
 
 #[tauri::command]
+fn equalizer() -> mp_core::eq::Equalizer {
+    mp_core::config::equalizer()
+}
+
+#[tauri::command]
+fn eq_presets() -> Vec<(&'static str, [f32; 10])> {
+    mp_core::eq::PRESETS.to_vec()
+}
+
+/// Apply, remember and broadcast equalizer settings (every window shows them).
+#[tauri::command]
+fn set_equalizer(eq: mp_core::eq::Equalizer, player: State<Player>, app: AppHandle) -> CmdResult {
+    let eq = eq.clamped();
+    player.set_equalizer(&eq).map_err(err)?;
+    let _ = app.emit("equalizer", &eq);
+    mp_core::config::set_equalizer(&eq).map_err(err)
+}
+
+#[tauri::command]
+fn stop(player: State<Player>) -> CmdResult {
+    player.stop().map_err(err)
+}
+
+#[tauri::command]
+fn set_repeat(mode: String, player: State<Player>) -> CmdResult {
+    player.set_repeat(&mode).map_err(err)
+}
+
+/// Shuffle or restore the queue, then re-sync our copy with mpv's new order.
+#[tauri::command]
+fn set_shuffle(on: bool, player: State<Player>, queue: State<Queue>, app: AppHandle) -> CmdResult {
+    player.set_shuffle(on).map_err(err)?;
+    let mut q = queue.lock().unwrap();
+    let mut pool: Vec<Option<Track>> = q.drain(..).map(Some).collect();
+    *q = player
+        .playlist_uris()
+        .iter()
+        .filter_map(|uri| {
+            pool.iter_mut()
+                .find(|t| t.as_ref().is_some_and(|t| &t.uri == uri))
+                .and_then(Option::take)
+        })
+        .collect();
+    let _ = app.emit("queue", &*q);
+    Ok(())
+}
+
+#[tauri::command]
 fn replaygain() -> String {
     mp_core::config::replaygain()
 }
@@ -246,6 +294,12 @@ pub fn run() {
             resize_compact,
             replaygain,
             set_replaygain,
+            equalizer,
+            eq_presets,
+            set_equalizer,
+            stop,
+            set_repeat,
+            set_shuffle,
             cover,
             lyrics,
             yt_search,

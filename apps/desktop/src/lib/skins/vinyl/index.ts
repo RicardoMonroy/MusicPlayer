@@ -1,12 +1,15 @@
 import type { Skin } from "..";
 import Vinyl from "./Vinyl.svelte";
 
+import Equalizer from "./Equalizer.svelte";
+
 export const skin: Skin = {
   id: "vinyl",
   name: "Vinilo",
   width: 380,
   height: 440,
   component: Vinyl,
+  equalizer: { component: Equalizer, height: 210 },
   playlist: {
     bg: "#3e2a1c",
     fg: "#f3ece4",

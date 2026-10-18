@@ -8,8 +8,11 @@
  * The component fills the whole window (width x height, transparent outside
  * its own shape) and marks drag areas with `data-tauri-drag-region`.
  * The compact page draws the shared chrome (skin switcher, expand, hide) on hover
- * in the top-right corner, so keep that 104x24 px area free of controls.
+ * in the top-right corner, so keep that 132x24 px area free of controls.
  * `playlist` themes the queue panel the compact page can unfold below the skin.
+ * `equalizer.component` is the skin's EQ panel (no props): it reads `player.eq` /
+ * `player.eqPresets` and calls `setEqualizer` / `applyPreset` ($lib/player.svelte).
+ * Panels can be toggled from inside a skin through `compact` ($lib/compact.svelte).
  */
 import type { Component } from "svelte";
 import { emit } from "@tauri-apps/api/event";
@@ -37,6 +40,8 @@ export type Skin = {
   height: number;
   component: Component;
   playlist: PlaylistTheme;
+  /** Equalizer panel drawn in the skin's own style, unfolded under the skin. */
+  equalizer: { component: Component; height: number };
 };
 
 /** Extra window height while the playlist is open. */

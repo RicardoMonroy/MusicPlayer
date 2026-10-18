@@ -44,3 +44,17 @@ pub fn set_replaygain(mode: &str) -> std::io::Result<()> {
     std::fs::create_dir_all(f.parent().unwrap())?;
     std::fs::write(f, mode)
 }
+
+pub fn equalizer() -> crate::eq::Equalizer {
+    file("equalizer.json")
+        .and_then(|f| std::fs::read(f).ok())
+        .and_then(|b| serde_json::from_slice::<crate::eq::Equalizer>(&b).ok())
+        .map(crate::eq::Equalizer::clamped)
+        .unwrap_or_default()
+}
+
+pub fn set_equalizer(eq: &crate::eq::Equalizer) -> std::io::Result<()> {
+    let f = file("equalizer.json").ok_or(std::io::ErrorKind::NotFound)?;
+    std::fs::create_dir_all(f.parent().unwrap())?;
+    std::fs::write(f, serde_json::to_vec(eq)?)
+}

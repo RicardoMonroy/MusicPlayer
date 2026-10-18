@@ -2,6 +2,8 @@
   import Spectrum from "./Spectrum.svelte";
   import { player, togglePause, next, prev } from "$lib/player.svelte";
 
+  import { compact } from "$lib/compact.svelte";
+
   const playing = $derived(player.status.index != null && !player.status.paused);
   const progress = $derived(
     player.status.duration > 0 ? player.status.position / player.status.duration : 0,
@@ -29,6 +31,10 @@
     <div class="head"></div>
   </div>
 
+  <div class="panel-switches">
+    <button class:on={compact.eq} aria-pressed={compact.eq} aria-label="Ecualizador" onclick={() => compact.eq = !compact.eq}><i></i> EQ</button>
+    <button class:on={compact.playlist} aria-pressed={compact.playlist} aria-label="Lista de reproducción" onclick={() => compact.playlist = !compact.playlist}><i></i> PL</button>
+  </div>
   <div class="info">
     <div class="text">
       <span class="title">{player.track?.title ?? "Baja la aguja"}</span>
@@ -53,6 +59,12 @@
 </div>
 
 <style>
+  .panel-switches { position:absolute; left:24px; top:341px; display:flex; gap:7px; }
+  .panel-switches button { width:47px; height:24px; display:flex; gap:5px; border-radius:3px; border:1px solid #ad8c56; color:#f0dfbf; font:10px monospace; }
+  .panel-switches i { width:5px; height:5px; display:inline-block; border-radius:50%; background:#333625; }
+  .panel-switches .on i { background:#f2c36c; box-shadow:0 0 4px #f2b366; }
+  .panel-switches button:focus-visible { outline:2px solid #f2c36c; outline-offset:2px; }
+
   .plinth {
     position: relative;
     width: 380px;

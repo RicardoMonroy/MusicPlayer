@@ -156,12 +156,48 @@ impl YtMusic {
                     .collect())
             }
             Kind::Artist => Ok(self.artist(id).await?.tracks),
-            Kind::Playlist => {
-                let mut p = q.music_playlist(id).await?;
-                p.tracks.extend_limit(&q, MAX_TRACKS).await?;
-                Ok(p.tracks.items.into_iter().map(track).collect())
-            }
+            Kind::Playlist => match self.playlist_tracks(id).await {
+                Ok(tracks) => Ok(tracks),
+                // rustypipe rejects some valid playlists (old 13-char IDs, mixed
+                // "album" playlists); yt-dlp lists them fine.
+                Err(e) => self.playlist_via_ytdlp(id).await.ok_or(e),
+            },
         }
+    }
+
+    /// Private playlists only resolve with the session, so retry signed in.
+    async fn playlist_tracks(&self, id: &str) -> Result<Vec<Track>, Error> {
+        let q = self.rp.query();
+        let q = match q.music_playlist(id).await {
+            Ok(p) => return self.expand(&q, p).await,
+            Err(_) if self.logged_in().await => self.rp.query().authenticated(),
+            Err(e) => return Err(e),
+        };
+        let p = q.music_playlist(id).await?;
+        self.expand(&q, p).await
+    }
+
+    async fn expand(
+        &self,
+        q: &rustypipe::client::RustyPipeQuery,
+        mut p: rustypipe::model::MusicPlaylist,
+    ) -> Result<Vec<Track>, Error> {
+        p.tracks.extend_limit(q, MAX_TRACKS).await?;
+        Ok(p.tracks.items.into_iter().map(track).collect())
+    }
+
+    async fn playlist_via_ytdlp(&self, id: &str) -> Option<Vec<Track>> {
+        let mut cmd = tokio::process::Command::new("yt-dlp");
+        cmd.args(["--flat-playlist", "-J", "--no-warnings"]);
+        if let Some(c) = self.cookies_file() {
+            cmd.arg("--cookies").arg(c);
+        }
+        let out = cmd
+            .arg(format!("https://www.youtube.com/playlist?list={id}"))
+            .output()
+            .await
+            .ok()?;
+        ytdlp_tracks(&serde_json::from_slice(&out.stdout).ok()?)
     }
 
     pub async fn logged_in(&self) -> bool {
@@ -190,11 +226,12 @@ impl YtMusic {
         let q = self.rp.query();
         let (playlists, albums) = tokio::join!(q.music_saved_playlists(), q.music_saved_albums());
         Ok(Library {
-            // "LM" is Liked Music, which callers show through `liked()`.
+            // "LM" is Liked Music, which callers show through `liked()`;
+            // "SE" (Episodes for Later) and podcasts are not music.
             playlists: playlists?
                 .items
                 .into_iter()
-                .filter(|p| p.id != "LM")
+                .filter(|p| p.id != "LM" && p.id != "SE" && !p.is_podcast)
                 .map(playlist)
                 .collect(),
             albums: albums?.items.into_iter().map(album).collect(),
@@ -296,6 +333,35 @@ fn album(a: AlbumItem) -> Collection {
         title: a.name,
         cover: best_thumb(&a.cover),
     }
+}
+
+/// Tracks from `yt-dlp --flat-playlist -J` output.
+fn ytdlp_tracks(json: &serde_json::Value) -> Option<Vec<Track>> {
+    let entries = json["entries"].as_array()?;
+    Some(
+        entries
+            .iter()
+            .filter_map(|e| {
+                let artist = e["channel"]
+                    .as_str()
+                    .or(e["uploader"].as_str())
+                    .unwrap_or("");
+                Some(Track {
+                    title: e["title"].as_str()?.to_string(),
+                    artist: artist.trim_end_matches(" - Topic").to_string(),
+                    album: String::new(),
+                    uri: watch_url(e["id"].as_str()?),
+                    track_no: None,
+                    duration: e["duration"].as_f64(),
+                    cover: e["thumbnails"]
+                        .as_array()
+                        .and_then(|t| t.last())
+                        .and_then(|t| t["url"].as_str())
+                        .map(String::from),
+                })
+            })
+            .collect(),
+    )
 }
 
 /// An artist whose name matches the query wins, like YouTube Music; else the first song.
@@ -420,6 +486,24 @@ mod tests {
         assert_eq!(compact_count(950), "950");
         assert_eq!(compact_count(1_000_000), "1 M");
         assert_eq!(compact_count(2_340_000), "2.3 M");
+    }
+
+    #[test]
+    fn parses_ytdlp_flat_playlist() {
+        let json = serde_json::json!({ "entries": [
+            { "id": "a1", "title": "Sanctus", "duration": 854.0, "channel": "Lacrimosa - Topic",
+              "thumbnails": [{ "url": "small" }, { "url": "big" }] },
+            { "id": "b2", "title": "No channel" },
+            { "title": "missing id is skipped" }
+        ]});
+        let t = ytdlp_tracks(&json).unwrap();
+        assert_eq!(t.len(), 2);
+        assert_eq!(
+            (t[0].artist.as_str(), t[0].duration, t[0].cover.as_deref()),
+            ("Lacrimosa", Some(854.0), Some("big"))
+        );
+        assert_eq!(t[0].uri, watch_url("a1"));
+        assert_eq!(t[1].artist, "");
     }
 
     #[test]

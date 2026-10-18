@@ -27,6 +27,10 @@ apps/tui            ratatui client
 
 Queue = mpv playlist (gapless, auto-advance for free). The UI polls player status ~4x/s. Sources will implement one `Provider` trait (add it with the second provider): `search`, `browse`, `resolve_stream(track) -> url/path`. The player only sees a URL or a path.
 
+## Equalizer
+
+`mp_core::eq`: Winamp's 10 bands (60 Hz–16 kHz) + preamp, ±12 dB, Winamp presets. One lavfi chain `@eq` placed before the visualizer; slider moves use `af-command` (no audio gap), falling back to a rebuild. Saved in `<config>/musicplayer/equalizer.json`, shared by GUI and TUI. Each skin draws its own EQ panel (`Skin.equalizer`). Planned: TUI EQ panel on the same API.
+
 ## Shared settings
 
 `<config>/musicplayer/music-folder` (`mp_core::config`) is the local music folder for both apps; the TUI's CLI arg updates it.
@@ -44,6 +48,7 @@ Queue = mpv playlist (gapless, auto-advance for free). The UI polls player statu
 ## Streaming services — real constraints
 
 - **YouTube Music** (`crates/providers/ytmusic`): metadata via `rustypipe` (search, albums, playlists, saved library, liked). Playback: mpv opens `music.youtube.com/watch?v=` URLs through its yt-dlp hook (`ytdl-format=bestaudio/best`), so **yt-dlp must be on PATH**. Login = cookies.txt exported from a private browser session; stored in rustypipe's cache under the app data dir (`<data>/dev.ricardo.musicplayer/ytmusic`), shared by desktop and TUI. Unofficial API: against YouTube ToS and may break when YouTube changes.
+  - Playlists: tried anonymously, then signed in (private lists), then listed with `yt-dlp --flat-playlist` when rustypipe rejects them (old 13-char IDs, mixed "album" playlists). Podcast lists (SE, is_podcast) are hidden.
   - shortcut: yt-dlp does not get the cookies, so private/age-restricted tracks may fail to play; pass `ytdl-raw-options=cookies=<file>` if needed.
 - **Qobuz**: partner API exists. Community clients (streamrip, qobuz-dl) use the web player app_id. Hi-res FLAC streams work well with mpv. Do it when the account is active.
 - **Amazon Music**: no public playback API and DRM (Widevine). Tauri webviews on Linux (WebKitGTK) do not support Widevine. Options: (a) embed the web player in a separate Electron window with Widevine (castLabs build), (b) control-only integration (now-playing + media keys of the official app), (c) drop it. Recommendation: (b) or postpone.

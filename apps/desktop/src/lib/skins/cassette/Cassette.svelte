@@ -2,6 +2,8 @@
   import Meters from "./Meters.svelte";
   import { player, togglePause, next, prev } from "$lib/player.svelte";
 
+  import { compact } from "$lib/compact.svelte";
+
   const playing = $derived(player.status.index != null && !player.status.paused);
   const progress = $derived(
     player.status.duration > 0 ? player.status.position / player.status.duration : 0,
@@ -35,6 +37,10 @@
     <Meters />
   </div>
 
+  <div class="panel-switches">
+    <button class:on={compact.eq} aria-pressed={compact.eq} aria-label="Ecualizador" onclick={() => compact.eq = !compact.eq}><i></i> EQ</button>
+    <button class:on={compact.playlist} aria-pressed={compact.playlist} aria-label="Lista de reproducción" onclick={() => compact.playlist = !compact.playlist}><i></i> PL</button>
+  </div>
   <div class="keys">
     <button onclick={prev} aria-label="Anterior">◀◀</button>
     <button class:down={playing} onclick={togglePause} aria-label="Reproducir/Pausar">
@@ -45,18 +51,25 @@
 </div>
 
 <style>
+  .panel-switches { position:absolute; right:17px; bottom:13px; display:flex; gap:5px; }
+  .panel-switches button { background:linear-gradient(#d9d9dc,#a9a9ae); color:#2a2a2e; border:2px outset #b7b7bd; border-radius:3px; padding:7px 5px; font:10px monospace; cursor:pointer; }
+  .panel-switches i { width:5px; height:5px; display:inline-block; border-radius:50%; background:#333625; }
+  .panel-switches .on i { background:#f2c36c; box-shadow:0 0 4px #f2b366; }
+  .panel-switches button:focus-visible { outline:2px solid #f2c36c; outline-offset:2px; }
+
   .deck {
+    position: relative;
     width: 420px;
     height: 300px;
     box-sizing: border-box;
-    padding: 14px 16px 0;
+    padding: 30px 16px 0;
     border-radius: 18px;
     background: linear-gradient(160deg, #2b2b30, #18181c);
     font-family: "Courier New", ui-monospace, monospace;
   }
   .shell {
     position: relative;
-    height: 220px;
+    height: 204px;
     border-radius: 12px;
     background: linear-gradient(180deg, #3a3a40, #26262b);
     box-shadow:
@@ -67,7 +80,7 @@
   }
   .label {
     position: relative;
-    height: 150px;
+    height: 128px;
     border-radius: 6px;
     background:
       linear-gradient(rgb(var(--accent)) 0 0) 0 30px / 100% 6px no-repeat,
@@ -104,9 +117,9 @@
     font-size: 22px;
   }
   .window {
-    margin: 18px auto 0;
+    margin: 12px auto 0;
     width: 250px;
-    height: 84px;
+    height: 78px;
     border-radius: 42px;
     background: #15130f;
     box-shadow: inset 0 2px 6px #000;
@@ -158,12 +171,12 @@
   }
   .keys {
     display: flex;
-    justify-content: center;
+    justify-content: flex-start;
     gap: 8px;
     margin-top: 12px;
   }
   .keys button {
-    width: 80px;
+    width: 66px;
     height: 36px;
     border: 0;
     border-radius: 4px 4px 8px 8px;
