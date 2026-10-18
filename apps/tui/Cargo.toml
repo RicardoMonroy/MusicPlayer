@@ -1,0 +1,13 @@
+[package]
+name = "musicplayer-tui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "musicplayer-tui"
+path = "src/main.rs"
+
+[dependencies]
+mp-core = { path = "../../crates/core" }
+ratatui = "0.30"
