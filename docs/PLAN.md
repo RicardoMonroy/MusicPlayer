@@ -1,6 +1,6 @@
 # Plan — MusicPlayer
 
-Status: stack approved 2026-10-18. M0, M1 done. M2 in progress.
+Status: stack approved 2026-10-18. M0–M3 done.
 
 ## Stack
 
@@ -34,7 +34,7 @@ Queue = mpv playlist (gapless, auto-advance for free). The UI polls player statu
   - Initial skins: Cassette (Kaset-like, reels spin with progress), Vinyl (record spins, tonearm moves with progress), Classic (Winamp 2-like, spectrum visualizer).
 - **Tray**: closing a window hides it to the tray. Left click toggles the mini player (Windows/macOS). Linux trays (StatusNotifierItem) only deliver menu events, so on Linux the tray menu has Mini player / Play-Pause / Next / Previous / Quit.
 - **Media keys**: `souvlaki` (MPRIS on Linux, SMTC on Windows, Now Playing on macOS) fed by a Rust poller that also pushes `now` events to every window.
-- **TUI (Linux first)**: ytm-player-like, but big buttons, mouse support, tabs (Library, Search, Queue, Playlists), visible key hints.
+- **TUI (Linux first)**: `musicplayer-tui [folder]` (folder remembered in `~/.config/musicplayer/tui-folder`, default ~/Music). Tabs Library / Albums / Queue, `/` search, big clickable Prev/Play/Next buttons, clickable seek and volume bars, mouse wheel, double-click to play, key hints footer. Playlists tab comes with YouTube Music.
 
 ## Streaming services — real constraints
 
