@@ -37,41 +37,43 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     app.areas.switcher = Rect::default();
     app.areas.columns.clear();
     draw_sidebar(f, app, sidebar);
-    if app.lyrics.is_none() && app.tab == Tab::Youtube {
+    if app.lyrics.is_none() && matches!(app.tab, Tab::Youtube | Tab::LocalSearch) {
         let [search, rest] =
             Layout::vertical([Constraint::Length(3), Constraint::Min(0)]).areas(main);
         main = rest;
-        let text = if app.yt_query.is_empty() && !app.searching {
-            "Busca canciones, artistas, álbumes, playlists…".to_string()
+        let query = if app.tab == Tab::LocalSearch {
+            &app.local_query
         } else {
-            format!("{}{}", app.yt_query, if app.searching { "▏" } else { "" })
+            &app.yt_query
+        };
+        let text = if query.is_empty() && !app.searching {
+            if app.tab == Tab::LocalSearch {
+                "Busca canciones, artistas, álbumes, carpetas…"
+            } else {
+                "Busca canciones, artistas, álbumes, playlists…"
+            }
+            .to_string()
+        } else {
+            format!("{}{}", query, if app.searching { "▏" } else { "" })
         };
         app.areas.search = search;
         f.render_widget(
             Paragraph::new(text).block(
                 Block::bordered()
-                    .title(" Buscar ")
+                    .title(if app.tab == Tab::LocalSearch {
+                        " Local › Buscar en local "
+                    } else {
+                        " YouTube Music › Buscar "
+                    })
                     .border_style(Style::new().fg(if app.searching { p.accent } else { p.dim })),
             ),
             search,
         );
-    } else if app.lyrics.is_none() && app.is_local() {
-        let [filter, rest] =
-            Layout::vertical([Constraint::Length(2), Constraint::Min(0)]).areas(main);
-        main = rest;
-        app.areas.search = filter;
-        f.render_widget(
-            Paragraph::new(format!(
-                "v: Canciones · Artistas · Discos · Carpetas\nFiltro (/): {}{}",
-                app.filter,
-                if app.searching { "▏" } else { "" }
-            ))
-            .fg(p.dim),
-            filter,
-        );
     }
     if app.tab == Tab::Equalizer && app.lyrics.is_none() {
         crate::equalizer::draw(f, app, main);
+    } else if app.local_results() {
+        draw_local_results(f, app, main);
     } else if app.is_local() && !matches!(app.local.state.page, crate::local::Page::Songs) {
         draw_local(f, app, main);
     } else if app.search_results() && app.remote_error().is_none() {
@@ -88,7 +90,7 @@ fn sidebar_width(width: u16) -> u16 {
 }
 
 fn tab_labels(width: u16) -> Vec<String> {
-    let icons = ["♫", "◉", "≡", "⌕", "♥", "≋"];
+    let icons = ["♫", "◉", "♬", "▸", "⌕", "⌕", "♥", "≡", "≋"];
     TABS.iter()
         .enumerate()
         .map(|(i, tab)| {
@@ -115,17 +117,24 @@ fn draw_sidebar(f: &mut Frame, app: &mut App, area: Rect) {
         Rect::new(area.x, area.y, area.width, 1),
     );
     app.areas.tabs.clear();
-    let height = if area.height >= 20 { 3 } else { 2 };
+    let mut y = area.y + 1;
     for (i, (tab, label)) in TABS.into_iter().zip(tab_labels(area.width)).enumerate() {
-        let rect = Rect::new(area.x, area.y + 1 + i as u16 * height, area.width, height)
-            .intersection(area);
+        if let Some(section) = match i {
+            0 => Some("LOCAL"),
+            5 => Some("YOUTUBE MUSIC"),
+            7 => Some("GENERAL"),
+            _ => None,
+        } {
+            f.render_widget(
+                Paragraph::new(if narrow { "─────" } else { section }).fg(p.dim),
+                Rect::new(area.x, y, area.width, 1).intersection(area),
+            );
+            y += 1;
+        }
+        let rect = Rect::new(area.x, y, area.width, 1).intersection(area);
+        y += 1;
         f.render_widget(
-            Paragraph::new(if area.height < 14 {
-                label
-            } else {
-                format!("\n{label}")
-            })
-            .style(if tab == app.tab {
+            Paragraph::new(label).style(if tab == app.tab {
                 Style::new().bg(p.selected).fg(p.accent).bold()
             } else {
                 Style::new()
@@ -179,7 +188,7 @@ fn draw_results(f: &mut Frame, app: &mut App, area: Rect) {
     .areas(area);
     let (title, text) = if let Some(name) = &app.yt_view.artist_name {
         (
-            format!(" {name} "),
+            format!(" YouTube Music › {} › {name} ", app.tab.title()),
             format!(
                 "{} canciones populares · {} álbumes\nEnter en un álbum para escucharlo completo",
                 app.yt_view.songs,
@@ -189,7 +198,7 @@ fn draw_results(f: &mut Frame, app: &mut App, area: Rect) {
     } else {
         app.areas.top = top;
         (
-            " Resultado principal ".into(),
+            " YouTube Music › Buscar · Resultado principal ".into(),
             match &app.yt_view.top {
                 Some(mp_ytmusic::Top::Artist(a)) => format!("{} · {}", a.title, a.subtitle),
                 Some(mp_ytmusic::Top::Track(t)) => format!("{} — {}", t.title, t.artist),
@@ -236,7 +245,7 @@ fn draw_results(f: &mut Frame, app: &mut App, area: Rect) {
             }
             let focused = index == app.yt_view.focus;
             let block = Block::bordered()
-                .title(format!(" {} ", titles[index]))
+                .title(format!(" YouTube Music › {} ", titles[index]))
                 .border_style(Style::new().fg(if focused { p.accent } else { p.dim }));
             app.areas.columns.push((index, block.inner(*rect)));
             let rows: Vec<_> = app.yt_view.columns[index]
@@ -315,13 +324,18 @@ fn draw_local(f: &mut Frame, app: &mut App, area: Rect) {
             i
         };
         let title = if artist {
-            ["Canciones", "Álbumes"][column].to_string()
+            format!("Local › {}", ["Canciones", "Álbumes"][column])
         } else {
             format!(
                 "{} · Orden: {} (o)",
                 app.local.breadcrumb(&app.albums),
                 app.local.order.label()
             )
+        };
+        let title = if let Some((done, total)) = app.scan {
+            format!("{title} · Escaneando… {done}/{total}")
+        } else {
+            title
         };
         let block = Block::bordered().title(title).border_style(Style::new().fg(
             if column == app.local.state.focus {
@@ -491,19 +505,36 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
                 .enumerate()
                 .map(|(i, t)| {
                     let playing = Some(&t.uri) == playing_uri.as_ref();
-                    Row::new(track_cells(t, i, playing))
+                    // The source tag only matters in the queue, where both mix.
+                    let origin = (app.tab == Tab::Queue).then(|| {
+                        if t.uri.starts_with("http") {
+                            "YT"
+                        } else {
+                            "Local"
+                        }
+                        .to_string()
+                    });
+                    Row::new(origin.into_iter().chain(track_cells(t, i, playing)))
                         .style(stripe(i, p).patch(row_style(&t.uri)))
                 })
                 .collect();
             (
-                Row::new(["#", "Título", "Artista", "Álbum", "Duración"]),
-                vec![
-                    Constraint::Length(4),
-                    Constraint::Fill(3),
-                    Constraint::Fill(2),
-                    Constraint::Fill(2),
-                    Constraint::Length(8),
-                ],
+                if app.tab == Tab::Queue {
+                    Row::new(["Origen", "#", "Título", "Artista", "Álbum", "Duración"])
+                } else {
+                    Row::new(["#", "Título", "Artista", "Álbum", "Duración"])
+                },
+                (app.tab == Tab::Queue)
+                    .then_some(Constraint::Length(5))
+                    .into_iter()
+                    .chain([
+                        Constraint::Length(4),
+                        Constraint::Fill(3),
+                        Constraint::Fill(2),
+                        Constraint::Fill(2),
+                        Constraint::Length(8),
+                    ])
+                    .collect(),
                 rows,
                 format!(
                     " {} · {} canciones ",
@@ -558,13 +589,13 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
                 ],
                 rows,
                 format!(
-                    " {} ",
+                    " YouTube Music › {} ",
                     view.opened
                         .as_ref()
                         .map(|(title, _, _)| title.as_str())
                         .unwrap_or(
                             if app.tab == Tab::Youtube && !app.yt_view.searched && app.logged_in {
-                                "Tu biblioteca"
+                                "Buscar"
                             } else {
                                 app.tab.title()
                             }
@@ -573,6 +604,7 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
             )
         }
 
+        Tab::Artists | Tab::Folders | Tab::LocalSearch => unreachable!("local renders separately"),
         Tab::Equalizer => unreachable!("EQ renders separately"),
         Tab::Albums => {
             let rows = app
@@ -644,13 +676,13 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
                 "No hay canciones en esta colección.".into()
             }
             Tab::Youtube if !app.logged_in => "Pulsa / para buscar. Para conectar: Conectar cuenta en la app de escritorio; la sesión se comparte.".into(),
-            Tab::Youtube => "Tu biblioteca está vacía. Pulsa / para buscar o r para recargar.".into(),
+            Tab::Youtube => "Pulsa / para buscar en YouTube Music. Tu música guardada está en 7 Mi biblioteca.".into(),
             Tab::Playlists if !app.logged_in => {
                 "Inicia sesión en la app de escritorio (Conectar cuenta); la sesión se comparte."
                     .into()
             }
             Tab::Playlists => "No hay canciones en esta colección.".into(),
-            Tab::Queue => "La cola está vacía. Elige algo en Biblioteca o Álbumes.".to_string(),
+            Tab::Queue => "La cola está vacía. Elige música local o de YouTube Music.".to_string(),
             _ if app.scan.is_some() => {
                 let (done, total) = app.scan.unwrap_or_default();
                 if total == 0 {
@@ -884,17 +916,7 @@ fn help_groups(app: &App) -> Vec<(&'static str, &'static str)> {
         ];
     }
     if app.searching {
-        return vec![
-            (
-                "Enter",
-                if app.tab == Tab::Youtube {
-                    "buscar"
-                } else {
-                    "listo"
-                },
-            ),
-            ("Esc", "cancelar"),
-        ];
+        return vec![("Enter", "buscar"), ("Esc", "cancelar")];
     }
     if app.tab == Tab::Equalizer {
         return vec![
@@ -907,7 +929,7 @@ fn help_groups(app: &App) -> Vec<(&'static str, &'static str)> {
             ("j/k", "lista"),
             ("Enter", "aplicar"),
             ("t", "tema"),
-            ("1-6", "vista"),
+            ("1-9", "vista"),
             ("q", "salir"),
         ];
     }
@@ -927,14 +949,14 @@ fn help_groups(app: &App) -> Vec<(&'static str, &'static str)> {
             groups.insert(1, ("Esc/⌫", "volver"));
         }
     }
-    if app.search_results() {
+    if app.search_results() || app.local_results() {
         groups.insert(1, ("Tab/⇧Tab", "columna"));
     }
     if app.is_local() {
-        groups.insert(0, ("v", "subvista"));
-        groups.insert(1, ("/", "filtrar"));
+        groups.insert(0, ("1-9", "vista"));
+        groups.insert(1, ("/", "buscar local"));
         groups.insert(2, ("Esc/⌫", "volver"));
-        if app.local_artist() {
+        if app.local_artist() || app.local_results() {
             groups.insert(2, ("Tab", "columna"));
         }
         if matches!(app.local.state.page, crate::local::Page::Albums) {
@@ -953,7 +975,7 @@ fn help_groups(app: &App) -> Vec<(&'static str, &'static str)> {
     if !app.is_local() {
         groups.push(("/", "buscar"));
     }
-    groups.extend([("1-6", "vista"), ("t", "tema"), ("+/-", "volumen")]);
+    groups.extend([("1-9", "vista"), ("t", "tema"), ("+/-", "volumen")]);
     groups
 }
 
@@ -1140,7 +1162,7 @@ mod tests {
             .collect();
         assert!(screen.contains("Midnight City"));
         assert!(screen.contains("▶"));
-        assert_eq!(a.areas.tabs.len(), 6);
+        assert_eq!(a.areas.tabs.len(), 9);
         assert!(a.areas.buttons.iter().all(|r| r.height == 3));
         assert!(a.areas.progress.width > 0 && a.areas.volume.width > 0);
     }
@@ -1149,7 +1171,7 @@ mod tests {
     fn sidebar_and_grid_breakpoints() {
         assert_eq!(sidebar_width(89), 6);
         assert_eq!(sidebar_width(90), 22);
-        assert_eq!(tab_labels(22)[0], " 1 ♫ Biblioteca ");
+        assert_eq!(tab_labels(22)[0], " 1 ♫ Canciones ");
         assert_eq!(tab_labels(6)[0], " 1 ♫ ");
         assert_eq!(
             (grid_columns(59), grid_columns(60), grid_columns(100)),
@@ -1211,7 +1233,7 @@ mod tests {
             assert!(screen.contains("Busca canciones, artistas, álbumes, playlists…"));
             assert!(screen.contains("Resultado principal"));
             assert_eq!(a.areas.columns.len(), 4);
-            assert!(a.areas.tabs.iter().all(|r| r.height >= 2));
+            assert!(a.areas.tabs.iter().all(|r| r.height >= 1));
         }
     }
 
@@ -1264,5 +1286,135 @@ mod tests {
             "        █",
             "5 bars; the top band survives in the last one"
         );
+    }
+}
+
+fn draw_local_results(f: &mut Frame, app: &mut App, area: Rect) {
+    let p = app.palette;
+    let columns = std::array::from_fn(|i| app.local_rows(i));
+    let top_row = crate::local::top(&columns, &app.albums, &app.local.state.filter);
+    let [top, mut body] = Layout::vertical([Constraint::Length(3), Constraint::Min(0)]).areas(area);
+    app.areas.top = top;
+    let text = top_row.as_ref().map_or_else(
+        || "Sin resultado principal".into(),
+        |r| crate::local::label(r, &app.albums, &app.library, &app.folder),
+    );
+    f.render_widget(
+        Paragraph::new(text)
+            .block(Block::bordered().title("Local › Buscar en local · Resultado principal")),
+        top,
+    );
+    let titles = ["Canciones", "Artistas", "Álbumes", "Carpetas"];
+    let count = grid_columns(body.width);
+    if count == 1 {
+        let [switch, rest] =
+            Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(body);
+        body = rest;
+        app.areas.switcher = switch;
+        f.render_widget(
+            Paragraph::new(format!("◀ {} ▶ · Tab", titles[app.column_focus()])).fg(p.accent),
+            switch,
+        );
+    }
+    let bands = Layout::vertical(vec![
+        Constraint::Fill(1);
+        if count == 1 { 1 } else { 4 / count }
+    ])
+    .split(body);
+    for (r, band) in bands.iter().enumerate() {
+        let cells = Layout::horizontal(vec![Constraint::Fill(1); count]).split(*band);
+        for (c, rect) in cells.iter().enumerate() {
+            let index = if count == 1 {
+                app.column_focus()
+            } else {
+                r * count + c
+            };
+            let focused = index == app.column_focus();
+            let block = Block::bordered()
+                .title(format!("Local › {}", titles[index]))
+                .border_style(Style::new().fg(if focused { p.accent } else { p.dim }));
+            app.areas.columns.push((index, block.inner(*rect)));
+            let rows = columns[index].iter().enumerate().map(|(i, row)| {
+                Row::new([crate::local::label(
+                    row,
+                    &app.albums,
+                    &app.library,
+                    &app.folder,
+                )])
+                .style(stripe(i, p))
+            });
+            let table = Table::new(rows, [Constraint::Fill(1)])
+                .block(block)
+                .row_highlight_style(Style::new().bg(p.selected).fg(p.accent))
+                .highlight_symbol("› ");
+            let state = if focused {
+                &mut app.table
+            } else {
+                &mut app.local.state.tables[index]
+            };
+            f.render_stateful_widget(table, *rect, state);
+        }
+    }
+}
+
+#[cfg(test)]
+mod section_tests {
+    use super::*;
+    use ratatui::{Terminal, backend::TestBackend};
+    #[test]
+    fn sections_search_and_queue_sources_at_supported_sizes() {
+        for (w, h) in [(80, 24), (160, 45)] {
+            let mut a = crate::app::tests::app(crate::local::tests::discography());
+            let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+            a.set_tab(Tab::LocalSearch);
+            a.local_query = "opeth".into();
+            a.run_local_search();
+            term.draw(|f| draw(f, &mut a)).unwrap();
+            let screen = term
+                .backend()
+                .buffer()
+                .content
+                .iter()
+                .map(|c| c.symbol())
+                .collect::<String>();
+            assert_eq!(a.areas.tabs.len(), 9);
+            assert!(a.areas.tabs.iter().all(|r| r.height == 1));
+            if w == 160 {
+                for label in ["LOCAL", "YOUTUBE MUSIC", "GENERAL"] {
+                    assert!(screen.contains(label));
+                }
+            } else {
+                assert!(screen.contains("─────"));
+            }
+            for label in [
+                "Resultado principal",
+                "Canciones",
+                "Artistas",
+                "Álbumes",
+                "Carpetas",
+            ] {
+                assert!(screen.contains(label), "{screen}");
+            }
+            assert!(!screen.contains("Filtro (/)") && !screen.contains("subvista"));
+            a.queue = vec![
+                crate::app::tests::track("Archivo", "A", "B"),
+                mp_core::Track {
+                    uri: "https://music.youtube.com/watch?v=x".into(),
+                    title: "Remota".into(),
+                    ..Default::default()
+                },
+            ];
+            a.set_tab(Tab::Queue);
+            term.draw(|f| draw(f, &mut a)).unwrap();
+            let b = term.backend().buffer();
+            let r = a.areas.list;
+            let line = |y| {
+                (r.x..r.right())
+                    .map(|x| b[(x, y)].symbol())
+                    .collect::<String>()
+            };
+            assert!(line(r.y + 1).contains("Local"));
+            assert!(line(r.y + 2).contains("YT"));
+        }
     }
 }

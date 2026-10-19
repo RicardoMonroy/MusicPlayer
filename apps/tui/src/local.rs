@@ -105,6 +105,7 @@ pub fn album_label(a: &Album, short: bool) -> String {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Page {
     Songs,
+    Search,
     Artists,
     Albums,
     Folders(String),
@@ -124,7 +125,7 @@ pub struct Snapshot {
     pub page: Page,
     pub filter: String,
     pub focus: usize,
-    pub tables: [TableState; 2],
+    pub tables: [TableState; 4],
 }
 impl Default for Snapshot {
     fn default() -> Self {
@@ -138,6 +139,7 @@ impl Default for Snapshot {
 }
 #[derive(Default)]
 pub struct Browser {
+    pub results: [Vec<Row>; 4],
     pub state: Snapshot,
     pub history: Vec<Snapshot>,
     pub order: Order,
@@ -164,12 +166,13 @@ impl Browser {
         let label = |p: &Page| match p {
             Page::Songs => "Canciones".into(),
             Page::Artists => "Artistas".into(),
-            Page::Albums => "Discos".into(),
+            Page::Search => "Buscar en local".into(),
+            Page::Albums => "Álbumes".into(),
             Page::Folders(s) => format!("Carpetas / {s}"),
             Page::Artist(s) => s.clone(),
             Page::Album(i) => albums.get(*i).map_or_else(String::new, |a| a.name.clone()),
         };
-        std::iter::once("Biblioteca".into())
+        std::iter::once("Local".into())
             .chain(self.history.iter().map(|s| label(&s.page)))
             .chain([label(&self.state.page)])
             .collect::<Vec<_>>()
@@ -204,6 +207,7 @@ pub fn rows(
     order: Order,
 ) -> Vec<Row> {
     let mut rows = match page {
+        Page::Search => return search(library, albums, root, filter)[column].clone(),
         Page::Songs => library.iter().cloned().map(Row::Track).collect(),
         Page::Artists => {
             let names: std::collections::BTreeSet<_> =
@@ -215,7 +219,9 @@ pub fn rows(
                 .iter()
                 .enumerate()
                 .filter(|(_, a)| match page {
-                    Page::Artist(name) => a.artist == *name,
+                    Page::Artist(name) => {
+                        a.artist == *name || a.tracks.iter().any(|t| t.artist == *name)
+                    }
                     _ => true,
                 })
                 .map(|(i, _)| i)
@@ -520,5 +526,159 @@ pub mod tests {
         assert_eq!(previous.tables[0].selected(), Some(8));
         assert_eq!(previous.tables[0].offset(), 4);
         assert!(browser.back().is_none());
+    }
+}
+
+/// Fold Latin metadata and decomposed accent marks without changing stored labels.
+pub fn fold(s: &str) -> String {
+    s.to_lowercase()
+        .chars()
+        .filter_map(|c| {
+            Some(match c {
+                '\u{300}'..='\u{36f}' => return None,
+                'á' | 'à' | 'â' | 'ä' | 'ã' | 'å' => 'a',
+                'é' | 'è' | 'ê' | 'ë' => 'e',
+                'í' | 'ì' | 'î' | 'ï' => 'i',
+                'ó' | 'ò' | 'ô' | 'ö' | 'õ' => 'o',
+                'ú' | 'ù' | 'û' | 'ü' => 'u',
+                'ñ' => 'n',
+                'ç' => 'c',
+                other => other,
+            })
+        })
+        .collect()
+}
+fn rank(value: &str, query: &str) -> Option<usize> {
+    let value = fold(value);
+    if value == query {
+        Some(0)
+    } else if value.starts_with(query) {
+        Some(1)
+    } else if value.contains(query) {
+        Some(2)
+    } else {
+        None
+    }
+}
+pub fn search(library: &[Track], albums: &[Album], root: &Path, query: &str) -> [Vec<Row>; 4] {
+    let q = fold(query.trim());
+    if q.is_empty() {
+        return Default::default();
+    }
+    let mut songs: Vec<_> = library
+        .iter()
+        .filter_map(|t| {
+            let folder = relative(t, root)
+                .rsplit_once('/')
+                .map_or(String::new(), |(p, _)| p.into());
+            [
+                t.title.as_str(),
+                &t.artist,
+                artist(t),
+                &t.album,
+                t.genre.as_deref().unwrap_or(""),
+                &folder,
+            ]
+            .into_iter()
+            .filter_map(|v| rank(v, &q))
+            .min()
+            .map(|r| (r, Row::Track(t.clone())))
+        })
+        .collect();
+    songs.sort_by_key(|(r, _)| *r);
+    let names: std::collections::BTreeSet<_> = albums
+        .iter()
+        .map(|a| a.artist.clone())
+        .chain(library.iter().map(|t| t.artist.clone()))
+        .collect();
+    let mut artists: Vec<_> = names
+        .into_iter()
+        .filter_map(|n| rank(&n, &q).map(|r| (r, Row::Artist(n))))
+        .collect();
+    artists.sort_by_key(|(r, _)| *r);
+    let mut discs: Vec<_> = albums
+        .iter()
+        .enumerate()
+        .filter_map(|(i, a)| {
+            // Title first, then artist and genre, so "opeth" lists Opeth's albums.
+            let genre = a
+                .tracks
+                .first()
+                .and_then(|t| t.genre.as_deref())
+                .unwrap_or("");
+            [a.name.as_str(), &a.artist, genre]
+                .into_iter()
+                .filter_map(|v| rank(v, &q))
+                .min()
+                .map(|r| (r, Row::Album(i)))
+        })
+        .collect();
+    discs.sort_by_key(|(r, _)| *r);
+    let mut folders = std::collections::BTreeSet::new();
+    for t in library {
+        let rel = relative(t, root);
+        let mut path = rel.as_str();
+        while let Some((parent, _)) = path.rsplit_once('/') {
+            folders.insert(parent.to_string());
+            path = parent;
+        }
+    }
+    let mut folders: Vec<_> = folders
+        .into_iter()
+        .filter_map(|p| rank(p.rsplit('/').next().unwrap_or(&p), &q).map(|r| (r, Row::Folder(p))))
+        .collect();
+    folders.sort_by_key(|(r, _)| *r);
+    [songs, artists, discs, folders].map(|rows| rows.into_iter().map(|(_, r)| r).collect())
+}
+pub fn top(columns: &[Vec<Row>; 4], albums: &[Album], query: &str) -> Option<Row> {
+    let q = fold(query.trim());
+    columns[1]
+        .iter()
+        .find(|r| matches!(r,Row::Artist(n) if fold(n)==q))
+        .or_else(|| {
+            columns[2]
+                .iter()
+                .find(|r| matches!(r,Row::Album(i) if fold(&albums[*i].name)==q))
+        })
+        .or_else(|| columns[0].first())
+        .cloned()
+}
+
+#[cfg(test)]
+mod search_tests {
+    use super::*;
+    use crate::app::tests::track;
+    #[test]
+    fn ranking_accents_fields_and_top_choice() {
+        let mut tracks = vec![
+            track("Una canción", "Otro", "Disco"),
+            track("Canción larga", "Otro", "Disco"),
+            track("CANCIÓN", "Björk", "Álbum"),
+        ];
+        tracks[0].genre = Some("Electrónica".into());
+        tracks[0].album_artist = Some("Ártista".into());
+        tracks[0].uri = "/music/Música/uno.flac".into();
+        let albums = group(&tracks);
+        let root = Path::new("/music");
+        let columns = search(&tracks, &albums, root, "cancion");
+        let names: Vec<_> = columns[0]
+            .iter()
+            .map(|r| match r {
+                Row::Track(t) => t.title.as_str(),
+                _ => panic!(),
+            })
+            .collect();
+        assert_eq!(names, ["CANCIÓN", "Canción larga", "Una canción"]);
+        assert_eq!(fold("Mu\u{301}sica"), "musica");
+        for q in ["electronica", "artista", "musica"] {
+            assert!(!search(&tracks, &albums, root, q)[0].is_empty());
+        }
+        let c = search(&tracks, &albums, root, "bjork");
+        assert!(matches!(top(&c, &albums, "bjork"), Some(Row::Artist(_))));
+        let c = search(&tracks, &albums, root, "album");
+        assert!(matches!(top(&c, &albums, "album"), Some(Row::Album(_))));
+        assert!(
+            matches!(top(&columns,&albums,"cancion"),Some(Row::Track(t)) if t.title=="CANCIÓN")
+        );
     }
 }

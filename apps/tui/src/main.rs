@@ -83,7 +83,7 @@ fn on_key(app: &mut App, k: KeyEvent) {
         let query = if youtube {
             &mut app.yt_query
         } else {
-            &mut app.filter
+            &mut app.local_query
         };
         match k.code {
             KeyCode::Esc => {
@@ -93,6 +93,8 @@ fn on_key(app: &mut App, k: KeyEvent) {
                 app.searching = false;
                 if youtube {
                     app.schedule(app::NetworkAction::Search, "Buscando…");
+                } else {
+                    app.run_local_search();
                 }
             }
             KeyCode::Backspace => {
@@ -152,7 +154,6 @@ fn on_key(app: &mut App, k: KeyEvent) {
     }
     let p = &app.player;
     match k.code {
-        KeyCode::Char('v') if app.is_local() => app.cycle_local(),
         KeyCode::Char('o') if app.is_local() => {
             app.local.order = app.local.order.next();
             app.table.select((app.row_count() > 0).then_some(0));
@@ -200,18 +201,30 @@ fn on_key(app: &mut App, k: KeyEvent) {
         KeyCode::Char('+') | KeyCode::Char('=') => app.volume_by(5.0),
         KeyCode::Char('-') => app.volume_by(-5.0),
         KeyCode::Char('/') => {
-            if !app.is_local() {
+            if matches!(
+                app.tab,
+                app::Tab::Library
+                    | app::Tab::Albums
+                    | app::Tab::Artists
+                    | app::Tab::Folders
+                    | app::Tab::LocalSearch
+            ) {
+                app.set_tab(app::Tab::LocalSearch);
+            } else {
                 app.set_tab(app::Tab::Youtube);
             }
             app.searching = true;
         }
         KeyCode::Esc | KeyCode::Backspace => app.back(),
-        KeyCode::Char('f') if app.tab == app::Tab::Library => app.searching = true,
-        KeyCode::Tab if app.search_results() || app.local_artist() => app.focus_column(1),
-        KeyCode::BackTab if app.search_results() || app.local_artist() => app.focus_column(-1),
+        KeyCode::Tab if app.search_results() || app.local_artist() || app.local_results() => {
+            app.focus_column(1)
+        }
+        KeyCode::BackTab if app.search_results() || app.local_artist() || app.local_results() => {
+            app.focus_column(-1)
+        }
         KeyCode::Tab => app.cycle_tab(1),
         KeyCode::BackTab => app.cycle_tab(-1),
-        KeyCode::Char(c @ '1'..='6') => app.set_tab(TABS[c as usize - '1' as usize]),
+        KeyCode::Char(c @ '1'..='9') => app.set_tab(TABS[c as usize - '1' as usize]),
         KeyCode::Up | KeyCode::Char('k') => app.move_selection(-1),
         KeyCode::Down | KeyCode::Char('j') => app.move_selection(1),
         KeyCode::PageUp => app.move_selection(-10),
@@ -355,13 +368,15 @@ mod tests {
         let mut a = app(crate::local::tests::discography());
         a.folder = PathBuf::from("/music");
         a.yt_query = "consulta remota".into();
-        key(&mut a, KeyCode::Char('v'));
+        key(&mut a, KeyCode::Char('3'));
         assert_eq!(a.local.state.page, local::Page::Artists);
         key(&mut a, KeyCode::Char('/'));
         for c in "opeth".chars() {
             key(&mut a, KeyCode::Char(c));
         }
         key(&mut a, KeyCode::Enter);
+        assert_eq!(a.row_count(), 4);
+        key(&mut a, KeyCode::Tab);
         assert_eq!(a.row_count(), 1);
         assert_eq!(a.yt_query, "consulta remota");
         key(&mut a, KeyCode::Enter);
@@ -410,7 +425,7 @@ mod tests {
     #[test]
     fn equalizer_keyboard_and_mouse_controls() {
         let mut a = app(Vec::new());
-        key(&mut a, KeyCode::Char('6'));
+        key(&mut a, KeyCode::Char('9'));
         assert_eq!(a.tab, Tab::Equalizer);
         a.eq = equalizer::EqState::new(Default::default());
         key(&mut a, KeyCode::Right);
@@ -506,7 +521,7 @@ mod tests {
     fn youtube_prompt_schedules_search_without_filtering_library() {
         let mut app = app(Vec::new());
         app.filter = "local".into();
-        key(&mut app, KeyCode::Char('4'));
+        key(&mut app, KeyCode::Char('6'));
         assert_eq!(app.tab, Tab::Youtube);
         key(&mut app, KeyCode::Char('/'));
         key(&mut app, KeyCode::Char('a'));
@@ -522,7 +537,7 @@ mod tests {
     #[test]
     fn search_focus_is_explicit_and_escape_keeps_query() {
         let mut a = app(Vec::new());
-        key(&mut a, KeyCode::Char('4'));
+        key(&mut a, KeyCode::Char('6'));
         key(&mut a, KeyCode::Char('/'));
         assert_eq!(a.tab, Tab::Youtube);
         key(&mut a, KeyCode::Char('z'));
@@ -531,9 +546,9 @@ mod tests {
         assert_eq!(a.yt_query, "z");
         assert!(!a.searching);
         key(&mut a, KeyCode::Char('1'));
-        key(&mut a, KeyCode::Char('f'));
+        key(&mut a, KeyCode::Char('/'));
         key(&mut a, KeyCode::Char('x'));
-        assert_eq!(a.filter, "x");
+        assert_eq!(a.local_query, "x");
         assert_eq!(a.yt_query, "z");
     }
 
@@ -550,8 +565,53 @@ mod tests {
         app.library_loaded = true;
         app.logged_in = true;
         key(&mut app, KeyCode::Char('1'));
-        key(&mut app, KeyCode::Char('5'));
+        key(&mut app, KeyCode::Char('7'));
         assert_eq!(app.tab, Tab::Playlists);
         assert!(app.pending.is_none());
+    }
+}
+
+#[cfg(test)]
+mod routing_tests {
+    use super::*;
+    #[test]
+    fn slash_routes_local_and_remote_sections() {
+        let mut a = crate::app::tests::app(Vec::new());
+        for tab in TABS[..5].iter().copied() {
+            a.set_tab(tab);
+            on_key(
+                &mut a,
+                KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE),
+            );
+            assert_eq!(a.tab, app::Tab::LocalSearch);
+            assert!(a.searching);
+        }
+        for tab in [app::Tab::Youtube, app::Tab::Playlists] {
+            a.set_tab(tab);
+            on_key(
+                &mut a,
+                KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE),
+            );
+            assert_eq!(a.tab, app::Tab::Youtube);
+            assert!(a.searching);
+        }
+    }
+    #[test]
+    fn local_results_play_and_restore_columns() {
+        let mut a = crate::app::tests::app(crate::local::tests::discography());
+        a.set_tab(app::Tab::LocalSearch);
+        a.local_query = "opeth".into();
+        a.run_local_search();
+        a.table.select(Some(1));
+        a.play_selected();
+        assert_eq!(a.queue.len(), 4);
+        a.focus_column(1);
+        a.play_selected();
+        assert!(a.local_artist());
+        a.back();
+        assert!(a.local_results());
+        assert_eq!(a.column_focus(), 1);
+        a.focus_column(-1);
+        assert_eq!(a.table.selected(), Some(1));
     }
 }

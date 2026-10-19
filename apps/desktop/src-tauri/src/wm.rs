@@ -14,7 +14,8 @@ fn hyprland() -> bool {
 
 const TITLE: &str = "MusicPlayer Mini";
 
-/// On Hyprland, (re)register a rule that floats and pins the mini player.
+/// On Hyprland, (re)register a rule that floats and pins the mini player, fully
+/// opaque (distros like Omarchy make every window slightly translucent).
 /// Named, so registering again replaces it; done before every show because a
 /// Hyprland config reload drops runtime rules.
 pub fn prepare_compact() {
@@ -22,7 +23,7 @@ pub fn prepare_compact() {
         return;
     }
     let lua = format!(
-        r#"hl.window_rule({{ name = "musicplayer-mini", match = {{ class = "^(musicplayer-desktop)$", title = "^({TITLE})$" }}, float = true, pin = true, no_blur = true, no_shadow = true, border_size = 0, rounding = 0 }})"#
+        r#"hl.window_rule({{ name = "musicplayer-mini", match = {{ class = "^(musicplayer-desktop)$", title = "^({TITLE})$" }}, float = true, pin = true, no_blur = true, no_shadow = true, border_size = 0, rounding = 0, tag = "-default-opacity", opacity = "1 1" }})"#
     );
     let ok = Command::new("hyprctl")
         .args(["eval", &lua])
