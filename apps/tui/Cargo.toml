@@ -10,8 +10,11 @@ path = "src/main.rs"
 
 [dependencies]
 dirs = "6"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 mp-core = { path = "../../crates/core" }
 mp-local = { version = "0.1.0", path = "../../crates/providers/local" }
 mp-ytmusic = { version = "0.1.0", path = "../../crates/providers/ytmusic" }
 ratatui = "0.30"
+ratatui-image = { version = "11", default-features = false, features = ["crossterm", "image-defaults"] }
+reqwest = "0.12"
 tokio = { version = "1", features = ["rt-multi-thread"] }

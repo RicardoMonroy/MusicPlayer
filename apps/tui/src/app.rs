@@ -63,6 +63,7 @@ pub struct Album {
 /// Screen areas from the last frame, used to map mouse clicks.
 #[derive(Default)]
 pub struct Areas {
+    pub panel: Rect,
     pub eq_bars: Vec<Rect>,
     pub eq_presets: Vec<(usize, Rect)>,
     pub tabs: Vec<Rect>,
@@ -90,7 +91,6 @@ pub enum NetworkAction {
 /// A finished network request, applied on the UI thread by `tick`.
 pub enum NetworkResult {
     Account(Result<std::sync::Arc<YtMusic>, String>, bool),
-    Lyrics(String, Option<String>),
     Home(Result<Vec<mp_ytmusic::Shelf>, String>),
     Search(Result<mp_ytmusic::SearchResults, String>),
     Artist(Tab, usize, Result<mp_ytmusic::ArtistPage, String>),
@@ -99,24 +99,8 @@ pub enum NetworkResult {
     Open(Tab, String, usize, Result<Vec<Track>, String>),
 }
 
-#[derive(Default)]
-pub struct LyricsPanel {
-    pub uri: String,
-    pub title: String,
-    pub text: Option<String>,
-    pub loading: bool,
-    pub scroll: u16,
-}
-
-impl LyricsPanel {
-    pub fn move_by(&mut self, delta: isize) {
-        self.scroll = (self.scroll as isize)
-            .saturating_add(delta)
-            .clamp(0, u16::MAX as isize) as u16;
-    }
-}
-
 pub struct App {
+    pub help: crate::help::Help,
     pub palette: crate::palette::Palette,
     skin_checked: Instant,
     pub eq: crate::equalizer::EqState,
@@ -124,7 +108,7 @@ pub struct App {
     requests: usize,
     pub account_checking: bool,
     pub started: Instant,
-    pub lyrics: Option<LyricsPanel>,
+    pub panel: crate::now_playing::Panel,
     pub runtime: Result<Runtime, String>,
     pub youtube: Result<std::sync::Arc<YtMusic>, String>,
     net: (
@@ -195,6 +179,7 @@ impl App {
             let _ = player.set_ytdl_cookies(yt.cookies_file().as_deref());
         }
         let mut app = Self {
+            help: Default::default(),
             palette: crate::palette::lookup(
                 mp_core::config::skin().as_deref().unwrap_or("musicplayer"),
             ),
@@ -204,7 +189,7 @@ impl App {
             requests: 0,
             account_checking: true,
             started: Instant::now(),
-            lyrics: None,
+            panel: crate::now_playing::Panel::default(),
             runtime,
             youtube,
             net: std::sync::mpsc::channel(),
@@ -349,14 +334,12 @@ impl App {
         if self.logged_in && !self.library_loaded && self.requests == 0 && self.pending.is_none() {
             self.schedule(NetworkAction::Library, "Cargando biblioteca…");
         }
-        if self
-            .lyrics
-            .as_ref()
-            .is_some_and(|panel| self.now_playing().is_some_and(|t| t.uri != panel.uri))
-        {
-            self.lyrics = None;
-            self.toggle_lyrics();
-        }
+        let track = self.now_playing().cloned();
+        self.panel.tick(
+            track.as_ref(),
+            self.runtime.as_ref().ok(),
+            self.youtube.as_ref().ok().cloned(),
+        );
         if let Some(t) = self
             .player
             .take_failures()
@@ -416,6 +399,7 @@ impl App {
     }
 
     pub fn set_tab(&mut self, tab: Tab) {
+        self.panel.focused = false;
         if self.search_results() {
             let focus = self.remote_view().focus;
             self.remote_view_mut().selections[focus] = self.table;
@@ -442,7 +426,6 @@ impl App {
             };
             self.filter.clear();
         }
-        self.lyrics = None;
         self.searching = false;
         self.last_click = None;
         if matches!(tab, Tab::Home | Tab::Youtube | Tab::Playlists) {
@@ -483,7 +466,7 @@ impl App {
         matches!(
             self.tab,
             Tab::Library | Tab::Albums | Tab::Artists | Tab::Folders | Tab::LocalSearch
-        ) && self.lyrics.is_none()
+        )
     }
 
     pub fn local_artist(&self) -> bool {
@@ -586,9 +569,7 @@ impl App {
     }
 
     pub fn search_results(&self) -> bool {
-        matches!(self.tab, Tab::Youtube | Tab::Home)
-            && self.remote_view().results()
-            && self.lyrics.is_none()
+        matches!(self.tab, Tab::Youtube | Tab::Home) && self.remote_view().results()
     }
 
     pub fn focus_column(&mut self, step: isize) {
@@ -623,10 +604,6 @@ impl App {
     }
 
     pub fn move_selection(&mut self, delta: isize) {
-        if let Some(panel) = &mut self.lyrics {
-            panel.move_by(delta);
-            return;
-        }
         let n = self.row_count();
         if n == 0 {
             return;
@@ -725,7 +702,7 @@ impl App {
     }
 
     pub fn play_collection(&mut self) {
-        if self.remote_view().opened.is_none() || self.lyrics.is_some() {
+        if self.remote_view().opened.is_none() {
             return;
         }
         let selected = self.table.selected();
@@ -801,9 +778,6 @@ impl App {
     }
 
     pub fn back(&mut self) {
-        if self.lyrics.take().is_some() {
-            return;
-        }
         if self.is_local() {
             if let Some(state) = self.local.back() {
                 self.filter = state.filter;
@@ -940,21 +914,11 @@ impl App {
     }
 
     fn apply_network(&mut self, result: NetworkResult) {
-        if let NetworkResult::Lyrics(uri, text) = result {
-            if let Some(panel) = &mut self.lyrics
-                && panel.uri == uri
-            {
-                panel.text = text.filter(|s| !s.trim().is_empty());
-                panel.loading = false;
-            }
-            return;
-        }
         self.requests = self.requests.saturating_sub(1);
         if self.pending.is_none() {
             self.message = None;
         }
         let (tab, result) = match result {
-            NetworkResult::Lyrics(..) => unreachable!(),
             NetworkResult::Account(yt, logged_in) => {
                 self.youtube = yt;
                 self.logged_in = logged_in;
@@ -1039,40 +1003,8 @@ impl App {
     }
 
     pub fn toggle_lyrics(&mut self) {
-        if self.lyrics.take().is_some() {
-            return;
-        }
-        let Some(track) = self.now_playing().cloned() else {
-            return;
-        };
-        self.lyrics = Some(LyricsPanel {
-            uri: track.uri.clone(),
-            title: track.title,
-            loading: true,
-            ..Default::default()
-        });
-        let Ok(runtime) = &self.runtime else {
-            self.lyrics.as_mut().unwrap().loading = false;
-            return;
-        };
-        let tx = self.net.0.clone();
-        let yt = self.youtube.as_ref().ok().cloned();
-        runtime.spawn(async move {
-            let uri = track.uri;
-            let text = if uri.starts_with("https://") {
-                match yt {
-                    Some(yt) => yt.lyrics(&uri).await.ok().flatten(),
-                    None => None,
-                }
-            } else {
-                let path = PathBuf::from(&uri);
-                tokio::task::spawn_blocking(move || mp_local::lyrics(&path))
-                    .await
-                    .ok()
-                    .flatten()
-            };
-            let _ = tx.send(NetworkResult::Lyrics(uri, text));
-        });
+        self.panel.lyrics_visible = !self.panel.lyrics_visible;
+        self.panel.focused = self.panel.lyrics_visible && self.areas.panel.width > 0;
     }
 
     pub fn prev(&mut self) -> Result<(), mp_core::player::Error> {
@@ -1099,7 +1031,7 @@ impl App {
 
     /// Table row under a screen line, if any.
     pub fn row_at(&self, y: u16) -> Option<usize> {
-        if self.lyrics.is_some() || self.search_results() {
+        if self.search_results() {
             return None;
         }
         let first_row = self.areas.list.y + 1;
@@ -1196,34 +1128,6 @@ pub mod tests {
         assert_eq!(a.yt_view.focus, 0);
         assert_eq!(a.table.selected(), Some(1));
         assert_eq!(a.table.offset(), 1);
-    }
-
-    #[test]
-    fn lyrics_scroll_and_result_state() {
-        let mut panel = LyricsPanel {
-            text: Some("uno\ndos\ntres".into()),
-            ..Default::default()
-        };
-        panel.move_by(100);
-        assert_eq!(panel.scroll, 100);
-        panel.move_by(-100);
-        assert_eq!(panel.scroll, 0);
-        let mut a = app(Vec::new());
-        a.lyrics = Some(LyricsPanel {
-            uri: "actual".into(),
-            loading: true,
-            ..Default::default()
-        });
-        a.apply_network(NetworkResult::Lyrics(
-            "anterior".into(),
-            Some("vieja".into()),
-        ));
-        assert!(a.lyrics.as_ref().unwrap().loading);
-        a.apply_network(NetworkResult::Lyrics("actual".into(), Some(" ".into())));
-        assert!(!a.lyrics.as_ref().unwrap().loading);
-        assert!(a.lyrics.as_ref().unwrap().text.is_none());
-        a.back();
-        assert!(a.lyrics.is_none());
     }
 
     #[test]

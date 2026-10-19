@@ -14,6 +14,7 @@ pub use rustypipe::error::Error;
 
 mod home;
 pub use home::{HomeItem, Shelf};
+pub mod translate;
 
 const COOKIES: &str = "cookies.txt";
 

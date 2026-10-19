@@ -29,7 +29,7 @@ Queue = mpv playlist (gapless, auto-advance for free). The UI polls player statu
 
 ## Lyrics
 
-YouTube Music lyrics (rustypipe) or embedded/.lrc for local files, shown in the resizable now-playing panel (drag its left edge; up to 50% of the space it shares with the centre view). "Traducir al español" shows original and Spanish side by side, line by line, via MyMemory's free API (no key, ~5000 chars/day anonymous; results cached in `<cache>/musicplayer/lyrics-es`). Google's unofficial endpoint was rejected: it rate-limits (HTTP 429). TUI: translation pending.
+YouTube Music lyrics (rustypipe) or embedded/.lrc for local files, shown in the resizable now-playing panel (drag its left edge; up to 50% of the space it shares with the centre view). "Traducir al español" shows original and Spanish side by side, line by line, via MyMemory's free API (no key, ~5000 chars/day anonymous; results cached in `<cache>/musicplayer/lyrics-es`). Google's unofficial endpoint was rejected: it rate-limits (HTTP 429). Shared code: `mp_ytmusic::translate`. TUI: right "Reproduciendo" panel with cover (ratatui-image: sixel/kitty/iTerm2, half-blocks fallback; `c` forces pixel art), title, lyrics (`l`) and side-by-side translation (`T`); `[` `]` width, `i` hide; hidden under 100 columns.
 
 ## Equalizer
 

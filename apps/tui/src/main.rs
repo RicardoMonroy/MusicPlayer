@@ -1,6 +1,8 @@
 mod app;
 mod equalizer;
+mod help;
 mod local;
+mod now_playing;
 mod palette;
 mod ui;
 mod youtube;
@@ -29,6 +31,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     app.start_scan();
 
     let mut terminal = ratatui::init();
+    app.panel.picker = ratatui_image::picker::Picker::from_query_stdio()
+        .unwrap_or_else(|_| ratatui_image::picker::Picker::halfblocks());
     execute!(std::io::stdout(), EnableMouseCapture)?;
     let result = run(&mut terminal, &mut app);
     app.flush_eq();
@@ -58,10 +62,7 @@ fn run(
         terminal.draw(|f| ui::draw(f, app))?;
         app.run_pending();
         // ~25 fps while the spectrum moves, 4 fps when idle.
-        let frame = if app.is_playing()
-            || app.message.is_some()
-            || app.lyrics.as_ref().is_some_and(|p| p.loading)
-        {
+        let frame = if app.is_playing() || app.message.is_some() || app.panel.loading() {
             40
         } else {
             250
@@ -78,6 +79,25 @@ fn run(
 }
 
 fn on_key(app: &mut App, k: KeyEvent) {
+    if app.help.open {
+        match k.code {
+            KeyCode::Esc | KeyCode::Char('?') | KeyCode::F(1) | KeyCode::Char('q') => {
+                app.help.open = false;
+            }
+            KeyCode::Up => app.help.move_by(-1),
+            KeyCode::Down => app.help.move_by(1),
+            KeyCode::PageUp => app.help.move_by(-(app.help.page as isize)),
+            KeyCode::PageDown => app.help.move_by(app.help.page as isize),
+            _ => {}
+        }
+        return;
+    }
+    if k.code == KeyCode::F(1) || (k.code == KeyCode::Char('?') && !app.searching) {
+        app.help.open = true;
+        app.help.scroll = 0;
+        app.last_click = None;
+        return;
+    }
     if app.searching {
         let youtube = app.tab == app::Tab::Youtube;
         let query = if youtube {
@@ -106,7 +126,42 @@ fn on_key(app: &mut App, k: KeyEvent) {
         app.table.select((app.row_count() > 0).then_some(0));
         return;
     }
-    if app.tab == app::Tab::Equalizer && app.lyrics.is_none() {
+    match k.code {
+        KeyCode::Char('i') => {
+            app.panel.visible = !app.panel.visible;
+            if !app.panel.visible {
+                app.panel.focused = false;
+            }
+            return;
+        }
+        KeyCode::Char('c') if !k.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.panel.toggle_pixel();
+            return;
+        }
+        KeyCode::Char('T') => {
+            app.panel.translate = !app.panel.translate;
+            return;
+        }
+        KeyCode::Char('[') => {
+            app.panel.resize(-4, app.areas.panel.width);
+            return;
+        }
+        KeyCode::Char(']') => {
+            app.panel.resize(4, app.areas.panel.width);
+            return;
+        }
+        KeyCode::Up | KeyCode::Down if app.panel.focused => {
+            app.panel
+                .move_by(if k.code == KeyCode::Up { -1 } else { 1 });
+            return;
+        }
+        KeyCode::Esc | KeyCode::Tab if app.panel.focused => {
+            app.panel.focused = false;
+            return;
+        }
+        _ => {}
+    }
+    if app.tab == app::Tab::Equalizer && !app.panel.focused {
         let step = if k.modifiers.contains(KeyModifiers::SHIFT) {
             2.0
         } else {
@@ -204,7 +259,7 @@ fn on_key(app: &mut App, k: KeyEvent) {
                 app.tab,
                 app::Tab::Home | app::Tab::Youtube | app::Tab::Playlists
             ) && app.remote_view().opened.is_some()
-                && app.lyrics.is_none() =>
+                && !app.panel.focused =>
         {
             app.play_collection()
         }
@@ -231,7 +286,7 @@ fn on_key(app: &mut App, k: KeyEvent) {
         KeyCode::Esc | KeyCode::Backspace => app.back(),
         KeyCode::Tab
             if app.search_results()
-                || (app.tab == app::Tab::Home && app.home.home_root() && app.lyrics.is_none())
+                || (app.tab == app::Tab::Home && app.home.home_root() && !app.panel.focused)
                 || app.local_artist()
                 || app.local_results() =>
         {
@@ -239,7 +294,7 @@ fn on_key(app: &mut App, k: KeyEvent) {
         }
         KeyCode::BackTab
             if app.search_results()
-                || (app.tab == app::Tab::Home && app.home.home_root() && app.lyrics.is_none())
+                || (app.tab == app::Tab::Home && app.home.home_root() && !app.panel.focused)
                 || app.local_artist()
                 || app.local_results() =>
         {
@@ -270,8 +325,28 @@ fn ratio_at(r: ratatui::layout::Rect, x: u16) -> f64 {
 }
 
 fn on_mouse(app: &mut App, m: MouseEvent) {
+    if app.help.open {
+        match m.kind {
+            MouseEventKind::ScrollUp => app.help.move_by(-3),
+            MouseEventKind::ScrollDown => app.help.move_by(3),
+            _ => {}
+        }
+        return;
+    }
     let (x, y) = (m.column, m.row);
-    if app.tab == app::Tab::Equalizer && app.lyrics.is_none() {
+    if hit(app.areas.panel, x, y) {
+        match m.kind {
+            MouseEventKind::Down(MouseButton::Left) => app.panel.focused = true,
+            MouseEventKind::ScrollUp => app.panel.move_by(-3),
+            MouseEventKind::ScrollDown => app.panel.move_by(3),
+            _ => {}
+        }
+        return;
+    }
+    if matches!(m.kind, MouseEventKind::Down(MouseButton::Left)) {
+        app.panel.focused = false;
+    }
+    if app.tab == app::Tab::Equalizer && !app.panel.focused {
         if let Some((i, rect)) = app
             .areas
             .eq_bars
@@ -637,5 +712,170 @@ mod routing_tests {
         assert_eq!(a.column_focus(), 1);
         a.focus_column(-1);
         assert_eq!(a.table.selected(), Some(1));
+    }
+}
+
+#[cfg(test)]
+mod panel_input_tests {
+    use super::*;
+
+    fn key(app: &mut App, code: KeyCode) {
+        on_key(app, KeyEvent::new(code, KeyModifiers::NONE));
+    }
+
+    #[test]
+    fn panel_controls_preserve_main_selection_and_scope_scroll_to_focus_or_hover() {
+        let mut app = crate::app::tests::app(vec![
+            crate::app::tests::track("Uno", "A", "B"),
+            crate::app::tests::track("Dos", "A", "B"),
+        ]);
+        app.areas.panel = ratatui::layout::Rect::new(90, 0, 30, 20);
+        key(&mut app, KeyCode::Down);
+        assert_eq!(app.table.selected(), Some(1));
+        assert_eq!(app.panel.scroll, 0);
+        let mouse = |kind, column| MouseEvent {
+            kind,
+            column,
+            row: 5,
+            modifiers: KeyModifiers::NONE,
+        };
+        on_mouse(&mut app, mouse(MouseEventKind::ScrollDown, 100));
+        assert_eq!(app.panel.scroll, 3);
+        assert!(!app.panel.focused);
+        on_mouse(
+            &mut app,
+            mouse(MouseEventKind::Down(MouseButton::Left), 100),
+        );
+        key(&mut app, KeyCode::Down);
+        assert_eq!(app.panel.scroll, 4);
+        assert_eq!(app.table.selected(), Some(1));
+        key(&mut app, KeyCode::Up);
+        assert_eq!(app.panel.scroll, 3);
+        key(&mut app, KeyCode::Esc);
+        assert!(!app.panel.focused);
+        key(&mut app, KeyCode::Up);
+        assert_eq!(app.table.selected(), Some(0));
+        key(&mut app, KeyCode::Char('c'));
+        assert!(app.panel.pixel);
+        key(&mut app, KeyCode::Char('T'));
+        assert!(app.panel.translate);
+        key(&mut app, KeyCode::Char(']'));
+        assert_eq!(app.panel.requested_width, Some(34));
+        key(&mut app, KeyCode::Char('['));
+        assert_eq!(app.panel.requested_width, Some(28));
+        key(&mut app, KeyCode::Char('l'));
+        assert!(!app.panel.lyrics_visible);
+        assert!(app.is_local());
+        key(&mut app, KeyCode::Char('l'));
+        assert!(app.panel.focused);
+        key(&mut app, KeyCode::Tab);
+        assert!(!app.panel.focused);
+        key(&mut app, KeyCode::Char('i'));
+        assert!(!app.panel.visible);
+        key(&mut app, KeyCode::Char('i'));
+        assert!(app.panel.visible && app.panel.pixel && app.panel.translate);
+        assert!(app.is_local());
+    }
+}
+
+#[cfg(test)]
+mod help_input_tests {
+    use super::*;
+
+    fn key(app: &mut App, code: KeyCode) {
+        on_key(app, KeyEvent::new(code, KeyModifiers::NONE));
+    }
+
+    #[test]
+    fn help_is_modal_and_open_close_keys_work_from_every_section() {
+        let mut app = crate::app::tests::app(Vec::new());
+        for tab in TABS {
+            app.set_tab(tab);
+            app.panel.focused = true;
+            for opener in [KeyCode::Char('?'), KeyCode::F(1)] {
+                for closer in [
+                    KeyCode::Esc,
+                    KeyCode::Char('?'),
+                    KeyCode::F(1),
+                    KeyCode::Char('q'),
+                ] {
+                    key(&mut app, opener);
+                    assert!(app.help.open);
+                    let selected = app.table.selected();
+                    key(&mut app, KeyCode::Char('n'));
+                    key(&mut app, KeyCode::Char('1'));
+                    key(&mut app, KeyCode::Enter);
+                    key(&mut app, closer);
+                    assert!(!app.help.open && !app.quit);
+                    assert_eq!(app.tab, tab);
+                    assert_eq!(app.table.selected(), selected);
+                    assert!(app.panel.focused);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn question_mark_is_search_text_and_f1_preserves_search_focus() {
+        let mut app = crate::app::tests::app(Vec::new());
+        for tab in [app::Tab::LocalSearch, app::Tab::Youtube] {
+            app.set_tab(tab);
+            app.searching = true;
+            key(&mut app, KeyCode::Char('?'));
+            assert!(!app.help.open);
+            assert_eq!(
+                if tab == app::Tab::Youtube {
+                    &app.yt_query
+                } else {
+                    &app.local_query
+                },
+                "?"
+            );
+            key(&mut app, KeyCode::F(1));
+            assert!(app.help.open && app.searching);
+            key(&mut app, KeyCode::Char('q'));
+            assert!(!app.help.open && app.searching && !app.quit);
+            key(&mut app, KeyCode::Char('x'));
+            assert_eq!(
+                if tab == app::Tab::Youtube {
+                    &app.yt_query
+                } else {
+                    &app.local_query
+                },
+                "?x"
+            );
+        }
+    }
+
+    #[test]
+    fn help_scroll_consumes_keyboard_and_mouse_without_touching_ui() {
+        let mut app = crate::app::tests::app(Vec::new());
+        key(&mut app, KeyCode::F(1));
+        app.help.max_scroll = 100;
+        app.help.page = 17;
+        key(&mut app, KeyCode::Down);
+        assert_eq!(app.help.scroll, 1);
+        key(&mut app, KeyCode::PageDown);
+        assert_eq!(app.help.scroll, 18);
+        key(&mut app, KeyCode::Up);
+        key(&mut app, KeyCode::PageUp);
+        assert_eq!(app.help.scroll, 0);
+        let mouse = |kind| MouseEvent {
+            kind,
+            column: 0,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        };
+        on_mouse(&mut app, mouse(MouseEventKind::ScrollDown));
+        assert_eq!(app.help.scroll, 3);
+        on_mouse(&mut app, mouse(MouseEventKind::ScrollUp));
+        assert_eq!(app.help.scroll, 0);
+        let selected = app.table.selected();
+        on_mouse(&mut app, mouse(MouseEventKind::Down(MouseButton::Left)));
+        assert_eq!(app.table.selected(), selected);
+        app.help.move_by(isize::MAX);
+        assert_eq!(app.help.scroll, 100);
+        app.help.move_by(isize::MIN);
+        assert_eq!(app.help.scroll, 0);
     }
 }

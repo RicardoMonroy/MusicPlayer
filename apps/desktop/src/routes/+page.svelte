@@ -17,6 +17,7 @@
   import { listen } from "@tauri-apps/api/event";
   import { savedSkin, skinById, applyTheme, DEFAULT_SKIN, HERO_SIZE } from "$lib/skins";
   import Settings, { type Section } from "$lib/Settings.svelte";
+  import { typing } from "$lib/shortcuts";
 
   type View = "local" | "youtube";
   const VIEW_KEY = "view";
@@ -53,10 +54,16 @@
   });
 
   /** Width of the now-playing panel; dragged with the handle on its left edge. */
-  const SIDEBAR = 210;
+  let sideCollapsed = $state(localStorage.getItem("side-collapsed") === "1");
+  const sidebarWidth = () => (sideCollapsed ? 64 : 210);
+  function toggleSide() {
+    sideCollapsed = !sideCollapsed;
+    localStorage.setItem("side-collapsed", sideCollapsed ? "1" : "0");
+    asideWidth = Math.min(asideWidth, asideMax());
+  }
   const ASIDE_MIN = 280;
   let asideWidth = $state(Number(localStorage.getItem("aside-width")) || 340);
-  const asideMax = () => Math.max(ASIDE_MIN, (window.innerWidth - SIDEBAR) / 2);
+  const asideMax = () => Math.max(ASIDE_MIN, (window.innerWidth - sidebarWidth()) / 2);
 
   function resizeStart(e: PointerEvent) {
     const el = e.currentTarget as HTMLElement;
@@ -107,35 +114,97 @@
   });
   $effect(() => localStorage.setItem(VIEW_KEY, view));
 
+  // Shortcuts are documented in $lib/shortcuts.ts (shown in Ajustes › Atajos).
   function onKey(e: KeyboardEvent) {
-    if (e.target instanceof HTMLInputElement) return;
-    if (e.code === "Space") {
+    if (typing(e)) return;
+    const ctrl = e.ctrlKey || e.metaKey;
+    if (ctrl && e.key === ",") return (e.preventDefault(), openSettings("apariencia"));
+    if (e.key === "?") return (e.preventDefault(), openSettings("atajos"));
+    if (settingsOpen) return;
+    if (ctrl && e.key.toLowerCase() === "f") {
       e.preventDefault();
-      togglePause();
+      document.querySelector<HTMLInputElement>(".view input")?.focus();
+      return;
+    }
+    if (ctrl && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+      e.preventDefault();
+      setVolume(Math.max(0, Math.min(100, player.status.volume + (e.key === "ArrowUp" ? 5 : -5))));
+      return;
+    }
+    if (ctrl || e.altKey) return;
+    const s = player.status;
+    switch (e.key) {
+      case " ":
+        e.preventDefault();
+        togglePause();
+        break;
+      case "ArrowLeft":
+      case "ArrowRight":
+        if (s.duration > 0) {
+          e.preventDefault();
+          seek(Math.max(0, Math.min(s.duration, s.position + (e.key === "ArrowRight" ? 5 : -5))));
+        }
+        break;
+      case "n":
+      case "N":
+        next();
+        break;
+      case "p":
+      case "P":
+        prev();
+        break;
+      case "l":
+      case "L":
+        showLyrics = !showLyrics;
+        break;
+      case "t":
+      case "T":
+        showLyrics = true;
+        toggleTranslate();
+        break;
+      case "e":
+      case "E":
+        openSettings("eq");
+        break;
+      case "m":
+      case "M":
+        showView("compact");
+        break;
     }
   }
 </script>
 
 <svelte:window onkeydown={onKey} onresize={() => (asideWidth = Math.min(asideWidth, asideMax()))} />
 
-<div class="app" style:--aside-w="{asideWidth}px">
-  <nav class="side">
-    <div class="brand">♫ MusicPlayer</div>
-    <button class:on={view === "local"} onclick={() => (view = "local")}>
+<div class="app" style:--aside-w="{asideWidth}px" style:--side-w="{sidebarWidth()}px">
+  <nav class="side" class:collapsed={sideCollapsed}>
+    <div class="brand">
+      <span class="label">♫ MusicPlayer</span>
+      <button
+        class="collapse"
+        onclick={toggleSide}
+        title={sideCollapsed ? "Expandir barra lateral" : "Contraer barra lateral"}
+        aria-label={sideCollapsed ? "Expandir barra lateral" : "Contraer barra lateral"}
+        aria-expanded={!sideCollapsed}
+      >
+        <svg viewBox="0 0 24 24"><path d={sideCollapsed ? "M9 6l6 6-6 6" : "M15 6l-6 6 6 6"} /></svg>
+      </button>
+    </div>
+    <button title="Biblioteca" class:on={view === "local"} onclick={() => (view = "local")}>
       <svg viewBox="0 0 24 24"><path d="M4 6h2v14H4zm4-2h2v16H8zm4 2h2v14h-2zm4.5-1.5 1.9-.6 4.2 14.3-1.9.6z" /></svg>
-      Biblioteca
+      <span class="label">Biblioteca</span>
     </button>
-    <button class:on={view === "youtube"} onclick={() => (view = "youtube")}>
+    <button title="YouTube Music" class:on={view === "youtube"} onclick={() => (view = "youtube")}>
       <svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20m0 18a8 8 0 1 1 0-16 8 8 0 0 1 0 16m-2-12.5v9l6-4.5z" /></svg>
-      YouTube Music
+      <span class="label">YouTube Music</span>
     </button>
-    <button class="gear" onclick={() => openSettings("apariencia")}>
+    <button title="Ajustes" class="gear" onclick={() => openSettings("apariencia")}>
       <svg viewBox="0 0 24 24"><path d="M19.4 13a7.5 7.5 0 0 0 0-2l2.1-1.6-2-3.5-2.5 1a7.6 7.6 0 0 0-1.7-1L15 3h-4l-.4 2.9a7.6 7.6 0 0 0-1.7 1l-2.5-1-2 3.5L6.6 11a7.5 7.5 0 0 0 0 2l-2.1 1.6 2 3.5 2.5-1c.5.4 1.1.7 1.7 1L11 21h4l.4-2.9c.6-.3 1.2-.6 1.7-1l2.5 1 2-3.5zM13 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7" /></svg>
-      Ajustes
+      <span class="label">Ajustes</span>
     </button>
-    <button class="mini" onclick={() => showView("compact")}>
+    <button title="Mini reproductor" class="mini" onclick={() => showView("compact")}>
       <svg viewBox="0 0 24 24"><path d="M19 11h-8v6h8zm4 8V5a2 2 0 0 0-2-2H3a2 2 0 0 0-2 2v14c0 1.1.9 2 2 2h18a2 2 0 0 0 2-2m-2 0H3V5h18z" /></svg>
-      Mini reproductor
+      <span class="label">Mini reproductor</span>
     </button>
   </nav>
 
@@ -285,7 +354,7 @@
     --accent-c: rgb(var(--accent));
     height: 100vh;
     display: grid;
-    grid-template-columns: 210px minmax(0, 1fr) var(--aside-w, 340px);
+    grid-template-columns: var(--side-w, 210px) minmax(0, 1fr) var(--aside-w, 340px);
     grid-template-rows: 1fr 88px;
   }
 
@@ -399,6 +468,42 @@
     font-size: 14px;
   }
 
+  .brand {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+  }
+  .side .collapse {
+    flex: none;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    justify-content: center;
+    border-radius: var(--radius);
+    color: var(--fg-dim);
+  }
+  .side .collapse svg {
+    width: 18px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2.4;
+  }
+  .side.collapsed {
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+  .side.collapsed .label {
+    display: none;
+  }
+  .side.collapsed .brand {
+    justify-content: center;
+    padding: 4px 0 18px;
+  }
+  .side.collapsed button {
+    justify-content: center;
+    padding: 10px 0;
+  }
   .side .gear {
     margin-top: auto;
   }

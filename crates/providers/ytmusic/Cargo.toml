@@ -12,6 +12,7 @@ tokio = { version = "1", features = ["macros", "process"] }
 serde_json = "1"
 sha1_smol = "1"
 reqwest = "0.12"
+dirs = "6"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

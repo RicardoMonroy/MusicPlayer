@@ -8,6 +8,10 @@ import { vitePreprocess } from "@sveltejs/vite-plugin-svelte";
 /** @type {import('@sveltejs/kit').Config} */
 const config = {
   preprocess: vitePreprocess(),
+  // Ship each component's CSS inside its JS. With separate CSS modules, a dev
+  // server restart could serve a component's raw source as its stylesheet
+  // (the mini player playlist lost its styles twice that way).
+  compilerOptions: { css: "injected" },
   kit: {
     adapter: adapter({
       fallback: "index.html",

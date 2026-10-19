@@ -1,6 +1,5 @@
 //! Lyrics translation to Spanish through MyMemory's free API (no key).
 //! Anonymous use allows ~5000 characters a day, so every result is cached on disk.
-// shortcut: desktop-only for now; move to a shared crate when the TUI gets translations.
 
 use std::path::PathBuf;
 

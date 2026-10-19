@@ -19,11 +19,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     let [content, now, help] = Layout::vertical([
         Constraint::Min(5),
         Constraint::Length(9),
-        Constraint::Length(if app.tab == Tab::Equalizer && app.lyrics.is_none() {
-            2
-        } else {
-            1
-        }),
+        Constraint::Length(if app.tab == Tab::Equalizer { 2 } else { 1 }),
     ])
     .areas(f.area());
     let [sidebar, mut main] = Layout::horizontal([
@@ -31,13 +27,23 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         Constraint::Min(0),
     ])
     .areas(content);
+    let width = app.panel.width(f.area().width, main.width);
+    let [centre, panel_area] =
+        Layout::horizontal([Constraint::Min(0), Constraint::Length(width)]).areas(main);
+    main = centre;
+    app.areas.panel = panel_area;
+    if width > 0 {
+        crate::now_playing::draw(f, app, panel_area);
+    } else {
+        app.panel.focused = false;
+    }
     app.areas.top = Rect::default();
     app.areas.search = Rect::default();
     app.areas.list = Rect::default();
     app.areas.switcher = Rect::default();
     app.areas.columns.clear();
     draw_sidebar(f, app, sidebar);
-    if app.lyrics.is_none() && matches!(app.tab, Tab::Youtube | Tab::LocalSearch) {
+    if matches!(app.tab, Tab::Youtube | Tab::LocalSearch) {
         let [search, rest] =
             Layout::vertical([Constraint::Length(3), Constraint::Min(0)]).areas(main);
         main = rest;
@@ -70,13 +76,13 @@ pub fn draw(f: &mut Frame, app: &mut App) {
             search,
         );
     }
-    if app.tab == Tab::Equalizer && app.lyrics.is_none() {
+    if app.tab == Tab::Equalizer {
         crate::equalizer::draw(f, app, main);
     } else if app.local_results() {
         draw_local_results(f, app, main);
     } else if app.is_local() && !matches!(app.local.state.page, crate::local::Page::Songs) {
         draw_local(f, app, main);
-    } else if app.tab == Tab::Home && app.remote_view().home_root() && app.lyrics.is_none() {
+    } else if app.tab == Tab::Home && app.remote_view().home_root() {
         draw_home(f, app, main);
     } else if app.search_results() && app.remote_error().is_none() {
         draw_results(f, app, main);
@@ -85,6 +91,9 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     }
     draw_now(f, app, now);
     draw_help(f, app, help);
+    if app.help.open {
+        crate::help::draw(f, app);
+    }
 }
 
 fn sidebar_width(width: u16) -> u16 {
@@ -429,66 +438,35 @@ fn stripe(index: usize, p: crate::palette::Palette) -> Style {
     })
 }
 
-fn lyrics_lines(text: &str, width: u16) -> Vec<String> {
+/// Wrap lyrics at word boundaries; only a word wider than the column is split.
+pub(crate) fn lyrics_lines(text: &str, width: u16) -> Vec<String> {
+    let width = width.max(1) as usize;
+    let w = |s: &str| Span::raw(s).width();
     let mut rows = Vec::new();
     for line in text.lines() {
         let mut row = String::new();
-        let mut used = 0;
-        for ch in line.chars() {
-            let size = Span::raw(ch.to_string()).width();
-            if used + size > width.max(1) as usize && !row.is_empty() {
+        for word in line.split(' ') {
+            let gap = usize::from(!row.is_empty());
+            if !row.is_empty() && w(&row) + gap + w(word) > width {
                 rows.push(std::mem::take(&mut row));
-                used = 0;
             }
-            row.push(ch);
-            used += size;
+            if !row.is_empty() {
+                row.push(' ');
+            }
+            for ch in word.chars() {
+                if w(&row) + w(&ch.to_string()) > width && !row.is_empty() {
+                    rows.push(std::mem::take(&mut row));
+                }
+                row.push(ch);
+            }
         }
         rows.push(row);
     }
     rows
 }
 
-fn draw_lyrics(f: &mut Frame, app: &mut App, area: Rect) {
-    let p = app.palette;
-    let spin = spinner(app);
-    let panel = app.lyrics.as_mut().unwrap();
-    let text = if panel.loading {
-        "Buscando letra…"
-    } else {
-        panel
-            .text
-            .as_deref()
-            .unwrap_or("No hay letra para esta canción")
-    };
-    let block = Block::bordered()
-        .border_type(BorderType::Rounded)
-        .border_style(Style::new().fg(p.dim))
-        .title(format!(
-            " {}Letra · {} ",
-            if panel.loading {
-                format!("{spin} ")
-            } else {
-                String::new()
-            },
-            panel.title
-        ))
-        .padding(ratatui::widgets::Padding::new(3, 3, 1, 0));
-    let inner = block.inner(area);
-    app.areas.list = inner;
-    let lines = lyrics_lines(text, inner.width);
-    panel.scroll = panel
-        .scroll
-        .min((lines.len().min(u16::MAX as usize) as u16).saturating_sub(inner.height));
-    let paragraph = Paragraph::new(lines.into_iter().map(Line::from).collect::<Vec<_>>());
-    f.render_widget(paragraph.scroll((panel.scroll, 0)).block(block), area);
-}
-
 fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
     let p = app.palette;
-    if app.lyrics.is_some() {
-        draw_lyrics(f, app, area);
-        return;
-    }
     let playing_uri = app.now_playing().map(|t| t.uri.clone());
     let row_style = |uri: &str| {
         if Some(uri) == playing_uri.as_deref() {
@@ -917,14 +895,6 @@ fn meter(ratio: f64, width: u16, color: Color, p: crate::palette::Palette) -> Pa
 }
 
 fn help_groups(app: &App) -> Vec<(&'static str, &'static str)> {
-    if app.lyrics.is_some() {
-        return vec![
-            ("Esc/l", "cerrar letra"),
-            ("↑/↓", "desplazar"),
-            ("Espacio", "pausar"),
-            ("q", "salir"),
-        ];
-    }
     if app.searching {
         return vec![("Enter", "buscar"), ("Esc", "cancelar")];
     }
@@ -1008,9 +978,24 @@ fn fit_hints<'a>(groups: &[(&'a str, &'a str)], width: u16) -> Vec<(&'a str, &'a
 
 fn draw_help(f: &mut Frame, app: &App, area: Rect) {
     let p = app.palette;
-    let groups = help_groups(app);
+    let mut groups = help_groups(app);
+    if !app.searching {
+        let mut panel_hints = vec![("i:", "panel")];
+        if app.areas.panel.width > 0 {
+            panel_hints.extend([("c", "pixel"), ("T", "traducir"), ("[ ]", "ancho")]);
+        }
+        panel_hints.append(&mut groups);
+        groups = panel_hints;
+    }
+    groups.insert(0, ("?", "ayuda"));
+    if app.searching && app.areas.panel.width > 0 {
+        groups.insert(1, ("T", "traducir"));
+    }
     let chunks: Vec<_> = if area.height > 1 {
-        vec![&groups[..6], &groups[6..]]
+        vec![
+            &groups[..groups.len().min(6)],
+            &groups[groups.len().min(6)..],
+        ]
     } else {
         vec![groups.as_slice()]
     };
@@ -1161,7 +1146,7 @@ mod tests {
     #[test]
     fn renders_and_records_click_areas() {
         let mut a = app(vec![track("Midnight City", "M83", "Hurry Up")]);
-        let mut term = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        let mut term = Terminal::new(TestBackend::new(160, 30)).unwrap();
         term.draw(|f| draw(f, &mut a)).unwrap();
         let screen: String = term
             .backend()
@@ -1213,7 +1198,7 @@ mod tests {
     fn lyrics_wrap_without_losing_text() {
         assert_eq!(
             lyrics_lines("Canción\nsegunda línea", 7),
-            ["Canción", "segunda", " línea"]
+            ["Canción", "segunda", "línea"]
         );
     }
 
@@ -1245,6 +1230,19 @@ mod tests {
             assert_eq!(a.areas.columns.len(), 4);
             assert!(a.areas.tabs.iter().all(|r| r.height >= 1));
         }
+    }
+
+    #[test]
+    fn lyrics_wrap_at_word_boundaries() {
+        assert_eq!(
+            lyrics_lines("With the sun in place", 12),
+            ["With the sun", "in place"]
+        );
+        assert_eq!(
+            lyrics_lines("Supercalifragilistic", 8),
+            ["Supercal", "ifragili", "stic"]
+        );
+        assert_eq!(lyrics_lines("a\n\nb", 5), ["a", "", "b"]);
     }
 
     #[test]
@@ -1491,7 +1489,7 @@ mod home_tests {
 
     #[test]
     fn home_columns_render_and_follow_focus_at_supported_sizes() {
-        for (w, h, count) in [(80, 24, 2), (160, 45, 4)] {
+        for (w, h, count) in [(80, 24, 2), (160, 45, 3)] {
             let mut app = crate::app::tests::app(Vec::new());
             app.home.home(crate::youtube::home_tests::shelves());
             app.home_loaded = true;

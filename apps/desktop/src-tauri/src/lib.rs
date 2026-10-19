@@ -1,5 +1,4 @@
 mod media;
-mod translate;
 mod tray;
 mod wm;
 
@@ -238,7 +237,7 @@ async fn lyrics(track: Track, yt: State<'_, YtMusic>) -> CmdResult<Option<String
 /// Spanish translation of a track's lyrics (cached; original if already Spanish).
 #[tauri::command]
 async fn translate_lyrics(uri: String, text: String) -> CmdResult<String> {
-    translate::to_spanish(&uri, &text).await
+    mp_ytmusic::translate::to_spanish(&uri, &text).await
 }
 
 #[tauri::command]

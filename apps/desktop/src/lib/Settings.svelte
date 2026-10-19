@@ -1,10 +1,11 @@
 <script lang="ts" module>
-  export type Section = "apariencia" | "audio" | "eq";
+  export type Section = "apariencia" | "audio" | "eq" | "atajos";
 </script>
 
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import { skins, skinById, chooseSkin } from "$lib/skins";
+  import { SHORTCUTS } from "$lib/shortcuts";
 
   let {
     open = $bindable(false),
@@ -20,7 +21,9 @@
     ["apariencia", "Apariencia"],
     ["audio", "Audio"],
     ["eq", "Ecualizador"],
+    ["atajos", "Atajos de teclado"],
   ];
+  const groups = [...new Set(SHORTCUTS.map((s) => s.group))];
 
   function onKey(e: KeyboardEvent) {
     if (open && e.key === "Escape") open = false;
@@ -82,6 +85,18 @@
             <option value="track">Por canción</option>
             <option value="album">Por álbum (respeta la dinámica del disco)</option>
           </select>
+        {:else if section === "atajos"}
+          <h3>Atajos de teclado</h3>
+          <p class="hint">Funcionan en el reproductor completo mientras no estés escribiendo en un campo.</p>
+          {#each groups as g (g)}
+            <h4>{g}</h4>
+            <dl class="keys">
+              {#each SHORTCUTS.filter((s) => s.group === g) as s (s.keys)}
+                <dt><kbd>{s.keys}</kbd></dt>
+                <dd>{s.action}</dd>
+              {/each}
+            </dl>
+          {/each}
         {:else}
           <h3>Ecualizador</h3>
           <p class="hint">Con el estilo de la skin {skin.name}. Se guarda y lo usa también la TUI.</p>
@@ -218,6 +233,36 @@
     padding: 8px 10px;
     font: inherit;
     min-width: 320px;
+  }
+  h4 {
+    margin: 18px 0 8px;
+    font-size: 13px;
+    color: var(--fg-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+  }
+  .keys {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 6px 18px;
+    margin: 0;
+    align-items: center;
+  }
+  .keys dd {
+    margin: 0;
+  }
+  kbd {
+    display: inline-block;
+    min-width: 22px;
+    padding: 2px 8px;
+    border: 1px solid var(--border);
+    border-bottom-width: 2px;
+    border-radius: var(--radius);
+    background: var(--surface);
+    box-shadow: var(--raised);
+    font: 12px/1.6 ui-monospace, monospace;
+    color: rgb(var(--accent));
+    text-align: center;
   }
   .eq {
     max-width: 640px;
