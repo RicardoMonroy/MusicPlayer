@@ -1,4 +1,5 @@
 mod media;
+mod translate;
 mod tray;
 mod wm;
 
@@ -234,6 +235,12 @@ async fn lyrics(track: Track, yt: State<'_, YtMusic>) -> CmdResult<Option<String
         .map_err(err)
 }
 
+/// Spanish translation of a track's lyrics (cached; original if already Spanish).
+#[tauri::command]
+async fn translate_lyrics(uri: String, text: String) -> CmdResult<String> {
+    translate::to_spanish(&uri, &text).await
+}
+
 #[tauri::command]
 async fn yt_search(query: String, yt: State<'_, YtMusic>) -> CmdResult<SearchResults> {
     yt.search(&query).await.map_err(err)
@@ -340,6 +347,7 @@ pub fn run() {
             cover,
             thumbnail,
             lyrics,
+            translate_lyrics,
             yt_search,
             yt_open,
             yt_artist,

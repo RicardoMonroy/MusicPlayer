@@ -25,12 +25,59 @@
 
   const track = $derived(player.track);
   let showLyrics = $state(false);
+  let translation = $state<string | null | undefined>(undefined);
+  let translate = $state(localStorage.getItem("lyrics-translate") === "1");
+  let translationError = $state("");
+
+  function toggleTranslate() {
+    translate = !translate;
+    localStorage.setItem("lyrics-translate", translate ? "1" : "0");
+  }
+
+  // Translate once per song while translation is on (results are cached on disk).
+  $effect(() => {
+    const t = player.track;
+    const text = lyrics;
+    translationError = "";
+    if (!translate || !t || !text) return;
+    let stale = false;
+    invoke<string>("translate_lyrics", { uri: t.uri, text })
+      .then((tr) => !stale && (translation = tr))
+      .catch((e) => {
+        if (!stale) {
+          translation = null;
+          translationError = String(e);
+        }
+      });
+    return () => (stale = true);
+  });
+
+  /** Width of the now-playing panel; dragged with the handle on its left edge. */
+  const SIDEBAR = 210;
+  const ASIDE_MIN = 280;
+  let asideWidth = $state(Number(localStorage.getItem("aside-width")) || 340);
+  const asideMax = () => Math.max(ASIDE_MIN, (window.innerWidth - SIDEBAR) / 2);
+
+  function resizeStart(e: PointerEvent) {
+    const el = e.currentTarget as HTMLElement;
+    el.setPointerCapture(e.pointerId);
+    const move = (ev: PointerEvent) => {
+      asideWidth = Math.round(Math.min(asideMax(), Math.max(ASIDE_MIN, window.innerWidth - ev.clientX)));
+    };
+    const up = () => {
+      el.removeEventListener("pointermove", move);
+      localStorage.setItem("aside-width", String(asideWidth));
+    };
+    el.addEventListener("pointermove", move);
+    el.addEventListener("pointerup", up, { once: true });
+  }
   let lyrics = $state<string | null | undefined>(undefined);
 
   // Fetch lyrics for the current track only while the panel is open.
   $effect(() => {
     const t = player.track;
     lyrics = undefined;
+    translation = undefined;
     if (!showLyrics || !t) return;
     let stale = false;
     invoke<string | null>("lyrics", { track: $state.snapshot(t) })
@@ -69,9 +116,9 @@
   }
 </script>
 
-<svelte:window onkeydown={onKey} />
+<svelte:window onkeydown={onKey} onresize={() => (asideWidth = Math.min(asideWidth, asideMax()))} />
 
-<div class="app">
+<div class="app" style:--aside-w="{asideWidth}px">
   <nav class="side">
     <div class="brand">♫ MusicPlayer</div>
     <button class:on={view === "local"} onclick={() => (view = "local")}>
@@ -99,6 +146,16 @@
   {/if}
 
   <aside class="now">
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div
+      class="resizer"
+      onpointerdown={resizeStart}
+      ondblclick={() => {
+        asideWidth = 340;
+        localStorage.setItem("aside-width", "340");
+      }}
+      title="Arrastra para cambiar el ancho (doble clic: restablecer)"
+    ></div>
     {#if player.coverUrl}
       <div class="backdrop" style="background-image: url({player.coverUrl})"></div>
     {/if}
@@ -111,7 +168,29 @@
         {:else if lyrics === null}
           <p class="dim">No hay letra para esta canción.</p>
         {:else}
-          <p>{lyrics}</p>
+          <button class="translate" class:on={translate} onclick={toggleTranslate}>
+            {translate ? "Solo original" : "Traducir al español"}
+          </button>
+          {#if translate && translation === undefined}
+            <p class="dim">Traduciendo…</p>
+          {:else if translate && translationError}
+            <p class="dim">{translationError}</p>
+          {:else if translate && translation === lyrics}
+            <p class="dim">La letra ya está en español.</p>
+            <p>{lyrics}</p>
+          {:else if translate && translation}
+            {@const original = lyrics.split("\n")}
+            {@const spanish = translation.split("\n")}
+            <!-- Line by line so each verse sits next to its translation. -->
+            <div class="dual">
+              {#each Array(Math.max(original.length, spanish.length)) as _, i (i)}
+                <span>{original[i] ?? ""}</span>
+                <span class="es">{spanish[i] ?? ""}</span>
+              {/each}
+            </div>
+          {:else}
+            <p>{lyrics}</p>
+          {/if}
         {/if}
       </div>
     {:else if skin.hero}
@@ -206,7 +285,7 @@
     --accent-c: rgb(var(--accent));
     height: 100vh;
     display: grid;
-    grid-template-columns: 210px minmax(0, 1fr) 340px;
+    grid-template-columns: 210px minmax(0, 1fr) var(--aside-w, 340px);
     grid-template-rows: 1fr 88px;
   }
 
@@ -249,6 +328,20 @@
     width: 20px;
   }
 
+  .resizer {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 6px;
+    cursor: col-resize;
+    z-index: 5;
+    touch-action: none;
+  }
+  .resizer:hover,
+  .resizer:active {
+    background: rgba(var(--accent), 0.35);
+  }
   .now {
     box-shadow: var(--sunken);
     position: relative;
@@ -333,6 +426,38 @@
   }
   .lyrics .dim {
     color: var(--fg-dim);
+  }
+  .translate {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    margin: 12px auto 0;
+    display: block;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-pill);
+    padding: 5px 14px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .translate.on {
+    background: rgba(var(--accent), 0.25);
+  }
+  .dual {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    column-gap: 18px;
+    row-gap: 2px;
+    margin: 20px 0;
+    text-align: left;
+    font-size: 14px;
+    line-height: 1.6;
+  }
+  .dual span {
+    min-height: 1.6em;
+  }
+  .dual .es {
+    color: rgb(var(--accent));
   }
   .lyrics-toggle {
     position: relative;

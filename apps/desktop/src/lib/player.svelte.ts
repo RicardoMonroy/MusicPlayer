@@ -152,7 +152,9 @@ async function averageColor(url: string): Promise<string> {
 
 function apply(now: Now) {
   player.status = now.status;
-  player.track = now.track;
+  // Status arrives ~4x/s; keep the same track object unless the song changed, so
+  // anything keyed on the track (lyrics, cover, heroes) does not restart.
+  if (now.track?.uri !== player.track?.uri) player.track = now.track;
   if ((now.track?.uri ?? "") !== coverFor) {
     coverFor = now.track?.uri ?? "";
     loadCover(now.track).catch(() => {});
@@ -163,7 +165,7 @@ function apply(now: Now) {
 export function connect() {
   invoke<Now>("now").then(apply);
   invoke<Track[]>("queue").then((q) => (player.queue = q));
-  invoke<Equalizer>("equalizer").then((e) => (player.eq = e));
+  invoke<Equalizer | null>("equalizer").then((e) => e && (player.eq = e));
   invoke<[string, number[]][]>("eq_presets").then((p) => (player.eqPresets = p));
   const offEq = listen<Equalizer>("equalizer", (e) => (player.eq = e.payload));
   const offQueue = listen<Track[]>("queue", (e) => (player.queue = e.payload));

@@ -31,3 +31,6 @@ reqwest = "0.12"
 dirs = "6"
 url = "2"
 
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+

@@ -27,6 +27,10 @@ apps/tui            ratatui client
 
 Queue = mpv playlist (gapless, auto-advance for free). The UI polls player status ~4x/s. Sources will implement one `Provider` trait (add it with the second provider): `search`, `browse`, `resolve_stream(track) -> url/path`. The player only sees a URL or a path.
 
+## Lyrics
+
+YouTube Music lyrics (rustypipe) or embedded/.lrc for local files, shown in the resizable now-playing panel (drag its left edge; up to 50% of the space it shares with the centre view). "Traducir al español" shows original and Spanish side by side, line by line, via MyMemory's free API (no key, ~5000 chars/day anonymous; results cached in `<cache>/musicplayer/lyrics-es`). Google's unofficial endpoint was rejected: it rate-limits (HTTP 429). TUI: translation pending.
+
 ## Equalizer
 
 `mp_core::eq`: Winamp's 10 bands (60 Hz–16 kHz) + preamp, ±12 dB, Winamp presets. One lavfi chain `@eq` placed before the visualizer; slider moves use `af-command` (no audio gap), falling back to a rebuild. Saved in `<config>/musicplayer/equalizer.json`, shared by GUI and TUI. Each skin draws its own EQ panel (`Skin.equalizer`). TUI: view 6 "Ecualizador" on the same API and config.
