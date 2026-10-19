@@ -5,7 +5,7 @@ mod wm;
 use std::{path::PathBuf, sync::Mutex};
 
 use mp_core::{Track, player::Player};
-use mp_ytmusic::{ArtistPage, Kind, Library, SearchResults, YtMusic};
+use mp_ytmusic::{ArtistPage, Kind, Library, SearchResults, Shelf, YtMusic};
 use tauri::{AppHandle, Emitter, Manager, State, WindowEvent, ipc::Response};
 
 /// What mpv is playing, in order; `Status::index` points into it.
@@ -244,6 +244,12 @@ async fn yt_open(kind: Kind, id: String, yt: State<'_, YtMusic>) -> CmdResult<Ve
     yt.open(&kind, &id).await.map_err(err)
 }
 
+/// YouTube Music's Home feed (personalized when logged in).
+#[tauri::command]
+async fn yt_home(yt: State<'_, YtMusic>) -> CmdResult<Vec<Shelf>> {
+    yt.home().await.map_err(err)
+}
+
 #[tauri::command]
 async fn yt_artist(id: String, yt: State<'_, YtMusic>) -> CmdResult<ArtistPage> {
     yt.artist(&id).await.map_err(err)
@@ -337,6 +343,7 @@ pub fn run() {
             yt_search,
             yt_open,
             yt_artist,
+            yt_home,
             yt_logged_in,
             yt_login,
             yt_logout,

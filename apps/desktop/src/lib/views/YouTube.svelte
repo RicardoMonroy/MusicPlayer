@@ -1,8 +1,15 @@
+<script lang="ts" module>
+  import type { Shelf } from "$lib/yt";
+  // Home is slow-ish (~2 s) and changes little: keep it for the session.
+  let homeCache: Shelf[] | null = null;
+</script>
+
 <script lang="ts">
   import { open as pickFile } from "@tauri-apps/plugin-dialog";
   import { play, type Track } from "$lib/player.svelte";
   import TrackList from "$lib/TrackList.svelte";
   import Cards from "$lib/Cards.svelte";
+  import HomeShelf from "$lib/HomeShelf.svelte";
   import * as yt from "$lib/yt";
 
   let query = $state("");
@@ -16,6 +23,22 @@
   /** An opened artist page; an album opened from it stacks on top (`opened`). */
   let artistPage = $state<yt.ArtistPage | null>(null);
   let allSongs = $state(false);
+  let tab = $state<"inicio" | "biblioteca">("inicio");
+  let shelves = $state<Shelf[] | null>(homeCache);
+  let homeError = $state("");
+
+  async function loadHome(force = false) {
+    if (shelves && !force) return;
+    homeError = "";
+    try {
+      shelves = homeCache = await yt.home();
+    } catch (e) {
+      homeError = String(e);
+    }
+  }
+  $effect(() => {
+    loadHome();
+  });
 
   $effect(() => {
     yt.loggedIn().then((ok) => {
@@ -187,35 +210,80 @@
         <h3>Videos</h3>
         <TrackList tracks={r.videos.slice(0, 8)} onplay={(i) => play(r.videos, i)} />
       {/if}
-    {:else if account && lib}
-      <h3>Tu biblioteca</h3>
-      <Cards
-        items={[{ kind: "playlist", id: "", title: "Me gusta", subtitle: "Canciones que te gustan", cover: null }]}
-        onopen={openLiked}
-      />
-      {#if lib.playlists.length}
-        <h3>Playlists</h3>
-        <Cards items={lib.playlists} onopen={openCard} />
-      {/if}
-      {#if lib.albums.length}
-        <h3>Álbumes guardados</h3>
-        <Cards items={lib.albums} onopen={openCard} />
-      {/if}
-    {:else if !account}
-      <div class="empty">
-        <p>Busca cualquier canción arriba, no necesitas cuenta.</p>
-        <p>
-          Para ver tu biblioteca, exporta las cookies de music.youtube.com como
-          <b>cookies.txt</b> (extensión “Get cookies.txt LOCALLY”, en una ventana privada) y pulsa
-          <b>Conectar cuenta</b>.
-        </p>
-        <p class="small">Las cookies se guardan solo en este equipo.</p>
+    {:else}
+      <div class="tabs" role="tablist">
+        <button role="tab" aria-selected={tab === "inicio"} class:on={tab === "inicio"} onclick={() => (tab = "inicio")}>Inicio</button>
+        <button role="tab" aria-selected={tab === "biblioteca"} class:on={tab === "biblioteca"} onclick={() => (tab = "biblioteca")}>Mi biblioteca</button>
+        {#if tab === "inicio"}
+          <button class="reload" onclick={() => loadHome(true)} title="Recargar recomendaciones">↻</button>
+        {/if}
       </div>
+      {#if tab === "inicio"}
+        {#if homeError}
+          <p class="error">{homeError}</p>
+        {:else if !shelves}
+          <div class="empty"><p>Cargando tus recomendaciones…</p></div>
+        {:else}
+          {#each shelves as shelf (shelf.title)}
+            <HomeShelf {shelf} onplay={play} onopen={openCard} />
+          {/each}
+        {/if}
+      {:else}
+        {#if account && lib}
+        <h3>Tu biblioteca</h3>
+        <Cards
+          items={[{ kind: "playlist", id: "", title: "Me gusta", subtitle: "Canciones que te gustan", cover: null }]}
+          onopen={openLiked}
+        />
+        {#if lib.playlists.length}
+          <h3>Playlists</h3>
+          <Cards items={lib.playlists} onopen={openCard} />
+        {/if}
+        {#if lib.albums.length}
+          <h3>Álbumes guardados</h3>
+          <Cards items={lib.albums} onopen={openCard} />
+        {/if}
+        {:else if !account}
+        <div class="empty">
+          <p>Busca cualquier canción arriba, no necesitas cuenta.</p>
+          <p>
+            Para ver tu biblioteca, exporta las cookies de music.youtube.com como
+            <b>cookies.txt</b> (extensión “Get cookies.txt LOCALLY”, en una ventana privada) y pulsa
+            <b>Conectar cuenta</b>.
+          </p>
+          <p class="small">Las cookies se guardan solo en este equipo.</p>
+        </div>
+        {/if}
+      {/if}
     {/if}
   </div>
 </section>
 
 <style>
+  .tabs {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 4px 0 18px;
+  }
+  .tabs button {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-pill);
+    background: var(--surface);
+    color: var(--fg-dim);
+    padding: 6px 16px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .tabs button.on {
+    background: rgb(var(--accent));
+    border-color: transparent;
+    color: var(--on-accent);
+  }
+  .tabs .reload {
+    margin-left: auto;
+    padding: 6px 12px;
+  }
   .top-row {
     display: grid;
     grid-template-columns: minmax(240px, 340px) 1fr;

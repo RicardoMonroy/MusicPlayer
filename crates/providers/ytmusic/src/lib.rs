@@ -12,6 +12,9 @@ use serde::{Deserialize, Serialize};
 
 pub use rustypipe::error::Error;
 
+mod home;
+pub use home::{HomeItem, Shelf};
+
 const COOKIES: &str = "cookies.txt";
 
 fn write_private(path: &Path, contents: &str) -> std::io::Result<()> {
@@ -200,6 +203,13 @@ impl YtMusic {
         ytdlp_tracks(&serde_json::from_slice(&out.stdout).ok()?)
     }
 
+    /// The Home feed, personalized when logged in (generic otherwise).
+    pub async fn home(&self) -> Result<Vec<Shelf>, Error> {
+        home::fetch(&self.dir, self.cookies_file().as_deref())
+            .await
+            .map_err(|e| Error::Other(e.into()))
+    }
+
     pub async fn logged_in(&self) -> bool {
         self.rp.user_auth_check_cookie().await.is_ok()
     }
@@ -273,7 +283,9 @@ fn best_thumb(thumbs: &[Thumbnail]) -> Option<String> {
     pick_thumb(thumbs.iter().map(|t| (t.width, t.url.as_str())))
 }
 
-fn pick_thumb<'a>(thumbs: impl Iterator<Item = (u32, &'a str)> + Clone) -> Option<String> {
+pub(crate) fn pick_thumb<'a>(
+    thumbs: impl Iterator<Item = (u32, &'a str)> + Clone,
+) -> Option<String> {
     thumbs
         .clone()
         .filter(|(w, _)| *w <= 544)
@@ -521,6 +533,16 @@ mod tests {
         );
         let yt = "https://i.ytimg.com/vi/x/hqdefault.jpg?w=1";
         assert_eq!(upscale(yt), yt);
+    }
+
+    /// Hits the network; run with `cargo test -p mp-ytmusic -- --ignored`.
+    #[tokio::test]
+    #[ignore]
+    async fn anonymous_home_has_shelves() {
+        let dir = std::env::temp_dir().join("mp-ytmusic-home-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let shelves = YtMusic::new(&dir).unwrap().home().await.unwrap();
+        assert!(!shelves.is_empty() && shelves.iter().all(|s| !s.items.is_empty()));
     }
 
     /// Hits the network; run with `cargo test -p mp-ytmusic -- --ignored`.

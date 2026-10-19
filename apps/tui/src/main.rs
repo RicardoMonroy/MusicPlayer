@@ -174,7 +174,18 @@ fn on_key(app: &mut App, k: KeyEvent) {
         }
         KeyCode::Char('t') => app.cycle_palette(),
         KeyCode::Char('l') => app.toggle_lyrics(),
-        KeyCode::Char('r') if matches!(app.tab, app::Tab::Youtube | app::Tab::Playlists) => {
+        KeyCode::Char('r')
+            if matches!(
+                app.tab,
+                app::Tab::Home | app::Tab::Youtube | app::Tab::Playlists
+            ) =>
+        {
+            if app.tab == app::Tab::Home {
+                if !app.home_loading {
+                    app.schedule(app::NetworkAction::Home, "Cargando inicio…");
+                }
+                return;
+            }
             app.yt_query.clear();
             app.yt_view = Default::default();
             if app.logged_in {
@@ -189,8 +200,10 @@ fn on_key(app: &mut App, k: KeyEvent) {
         KeyCode::Char(' ') => drop(p.toggle_pause()),
         KeyCode::Char('n') => drop(p.next()),
         KeyCode::Char('p')
-            if matches!(app.tab, app::Tab::Youtube | app::Tab::Playlists)
-                && app.remote_view().opened.is_some()
+            if matches!(
+                app.tab,
+                app::Tab::Home | app::Tab::Youtube | app::Tab::Playlists
+            ) && app.remote_view().opened.is_some()
                 && app.lyrics.is_none() =>
         {
             app.play_collection()
@@ -216,14 +229,25 @@ fn on_key(app: &mut App, k: KeyEvent) {
             app.searching = true;
         }
         KeyCode::Esc | KeyCode::Backspace => app.back(),
-        KeyCode::Tab if app.search_results() || app.local_artist() || app.local_results() => {
+        KeyCode::Tab
+            if app.search_results()
+                || (app.tab == app::Tab::Home && app.home.home_root() && app.lyrics.is_none())
+                || app.local_artist()
+                || app.local_results() =>
+        {
             app.focus_column(1)
         }
-        KeyCode::BackTab if app.search_results() || app.local_artist() || app.local_results() => {
+        KeyCode::BackTab
+            if app.search_results()
+                || (app.tab == app::Tab::Home && app.home.home_root() && app.lyrics.is_none())
+                || app.local_artist()
+                || app.local_results() =>
+        {
             app.focus_column(-1)
         }
         KeyCode::Tab => app.cycle_tab(1),
         KeyCode::BackTab => app.cycle_tab(-1),
+        KeyCode::Char('0') => app.set_tab(app::Tab::Equalizer),
         KeyCode::Char(c @ '1'..='9') => app.set_tab(TABS[c as usize - '1' as usize]),
         KeyCode::Up | KeyCode::Char('k') => app.move_selection(-1),
         KeyCode::Down | KeyCode::Char('j') => app.move_selection(1),
@@ -425,7 +449,7 @@ mod tests {
     #[test]
     fn equalizer_keyboard_and_mouse_controls() {
         let mut a = app(Vec::new());
-        key(&mut a, KeyCode::Char('9'));
+        key(&mut a, KeyCode::Char('0'));
         assert_eq!(a.tab, Tab::Equalizer);
         a.eq = equalizer::EqState::new(Default::default());
         key(&mut a, KeyCode::Right);
@@ -521,7 +545,7 @@ mod tests {
     fn youtube_prompt_schedules_search_without_filtering_library() {
         let mut app = app(Vec::new());
         app.filter = "local".into();
-        key(&mut app, KeyCode::Char('6'));
+        key(&mut app, KeyCode::Char('7'));
         assert_eq!(app.tab, Tab::Youtube);
         key(&mut app, KeyCode::Char('/'));
         key(&mut app, KeyCode::Char('a'));
@@ -537,7 +561,7 @@ mod tests {
     #[test]
     fn search_focus_is_explicit_and_escape_keeps_query() {
         let mut a = app(Vec::new());
-        key(&mut a, KeyCode::Char('6'));
+        key(&mut a, KeyCode::Char('7'));
         key(&mut a, KeyCode::Char('/'));
         assert_eq!(a.tab, Tab::Youtube);
         key(&mut a, KeyCode::Char('z'));
@@ -565,7 +589,7 @@ mod tests {
         app.library_loaded = true;
         app.logged_in = true;
         key(&mut app, KeyCode::Char('1'));
-        key(&mut app, KeyCode::Char('7'));
+        key(&mut app, KeyCode::Char('8'));
         assert_eq!(app.tab, Tab::Playlists);
         assert!(app.pending.is_none());
     }

@@ -2762,9 +2762,11 @@ name = "mp-ytmusic"
 version = "0.1.0"
 dependencies = [
  "mp-core",
+ "reqwest 0.12.28",
  "rustypipe",
  "serde",
  "serde_json",
+ "sha1_smol",
  "tokio",
 ]
 
@@ -4554,6 +4556,12 @@ dependencies = [
  "cpufeatures",
  "digest",
 ]
+
+[[package]]
+name = "sha1_smol"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbfa15b3dddfee50a0fff136974b3e1bde555604ba463834a7eb7deb6417705d"
 
 [[package]]
 name = "sha2"

@@ -76,6 +76,8 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         draw_local_results(f, app, main);
     } else if app.is_local() && !matches!(app.local.state.page, crate::local::Page::Songs) {
         draw_local(f, app, main);
+    } else if app.tab == Tab::Home && app.remote_view().home_root() && app.lyrics.is_none() {
+        draw_home(f, app, main);
     } else if app.search_results() && app.remote_error().is_none() {
         draw_results(f, app, main);
     } else {
@@ -90,14 +92,14 @@ fn sidebar_width(width: u16) -> u16 {
 }
 
 fn tab_labels(width: u16) -> Vec<String> {
-    let icons = ["♫", "◉", "♬", "▸", "⌕", "⌕", "♥", "≡", "≋"];
+    let icons = ["♫", "◉", "♬", "▸", "⌕", "⌂", "⌕", "♥", "≡", "≋"];
     TABS.iter()
         .enumerate()
         .map(|(i, tab)| {
             if width > 6 {
-                format!(" {} {} {} ", i + 1, icons[i], tab.title())
+                format!(" {} {} {} ", (i + 1) % 10, icons[i], tab.title())
             } else {
-                format!(" {} {} ", i + 1, icons[i])
+                format!(" {} {} ", (i + 1) % 10, icons[i])
             }
         })
         .collect()
@@ -122,7 +124,7 @@ fn draw_sidebar(f: &mut Frame, app: &mut App, area: Rect) {
         if let Some(section) = match i {
             0 => Some("LOCAL"),
             5 => Some("YOUTUBE MUSIC"),
-            7 => Some("GENERAL"),
+            8 => Some("GENERAL"),
             _ => None,
         } {
             f.render_widget(
@@ -150,6 +152,9 @@ fn draw_sidebar(f: &mut Frame, app: &mut App, area: Rect) {
     } else {
         ("○ Sin cuenta".into(), p.dim)
     };
+    if y >= area.bottom() {
+        return;
+    }
     f.render_widget(
         Paragraph::new(if narrow {
             account.chars().take(1).collect::<String>()
@@ -175,9 +180,9 @@ fn grid_columns(width: u16) -> usize {
 
 fn draw_results(f: &mut Frame, app: &mut App, area: Rect) {
     let p = app.palette;
-    let artist = app.yt_view.artist_name.is_some();
+    let artist = app.remote_view().artist_name.is_some();
     let titles: &[&str] = if artist {
-        &["Populares", "Álbumes", "Playlists"][..app.yt_view.column_count()]
+        &["Populares", "Álbumes", "Playlists"][..app.remote_view().column_count()]
     } else {
         &COLUMN_TITLES
     };
@@ -186,20 +191,20 @@ fn draw_results(f: &mut Frame, app: &mut App, area: Rect) {
         Constraint::Min(0),
     ])
     .areas(area);
-    let (title, text) = if let Some(name) = &app.yt_view.artist_name {
+    let (title, text) = if let Some(name) = &app.remote_view().artist_name {
         (
             format!(" YouTube Music › {} › {name} ", app.tab.title()),
             format!(
                 "{} canciones populares · {} álbumes\nEnter en un álbum para escucharlo completo",
-                app.yt_view.songs,
-                app.yt_view.columns[1].len()
+                app.remote_view().songs,
+                app.remote_view().columns[1].len()
             ),
         )
     } else {
         app.areas.top = top;
         (
             " YouTube Music › Buscar · Resultado principal ".into(),
-            match &app.yt_view.top {
+            match &app.remote_view().top {
                 Some(mp_ytmusic::Top::Artist(a)) => format!("{} · {}", a.title, a.subtitle),
                 Some(mp_ytmusic::Top::Track(t)) => format!("{} — {}", t.title, t.artist),
                 None => "Sin resultado principal".into(),
@@ -222,7 +227,7 @@ fn draw_results(f: &mut Frame, app: &mut App, area: Rect) {
         body = rest;
         app.areas.switcher = switch;
         f.render_widget(
-            Paragraph::new(format!("◀ {} ▶ · Tab", titles[app.yt_view.focus])).fg(p.accent),
+            Paragraph::new(format!("◀ {} ▶ · Tab", titles[app.remote_view().focus])).fg(p.accent),
             switch,
         );
     }
@@ -236,25 +241,25 @@ fn draw_results(f: &mut Frame, app: &mut App, area: Rect) {
         let cells = Layout::horizontal(vec![Constraint::Fill(1); count]).split(*band);
         for (c, rect) in cells.iter().enumerate() {
             let index = if count == 1 {
-                app.yt_view.focus
+                app.remote_view().focus
             } else {
                 r * count + c
             };
             if index >= titles.len() {
                 continue;
             }
-            let focused = index == app.yt_view.focus;
+            let focused = index == app.remote_view().focus;
             let block = Block::bordered()
                 .title(format!(" YouTube Music › {} ", titles[index]))
                 .border_style(Style::new().fg(if focused { p.accent } else { p.dim }));
             app.areas.columns.push((index, block.inner(*rect)));
-            let rows: Vec<_> = app.yt_view.columns[index]
+            let rows: Vec<_> = app.remote_view().columns[index]
                 .iter()
                 .enumerate()
                 .map(|(i, row)| {
                     let (marker, title, subtitle) = row.label();
                     // The column title already names the kind: keep only its icon.
-                    let marker = if index == 0 && i >= app.yt_view.songs {
+                    let marker = if index == 0 && i >= app.remote_view().songs {
                         "▷"
                     } else {
                         marker.split(' ').next().unwrap_or_default()
@@ -270,7 +275,7 @@ fn draw_results(f: &mut Frame, app: &mut App, area: Rect) {
             let state = if focused {
                 &mut app.table
             } else {
-                &mut app.yt_view.selections[index]
+                &mut app.remote_view_mut().selections[index]
             };
             f.render_stateful_widget(table, *rect, state);
         }
@@ -547,7 +552,7 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
                 ),
             )
         }
-        Tab::Youtube | Tab::Playlists => {
+        Tab::Home | Tab::Youtube | Tab::Playlists => {
             let view = app.remote_view();
             let rows = view
                 .rows
@@ -589,7 +594,12 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
                 ],
                 rows,
                 format!(
-                    " YouTube Music › {} ",
+                    " YouTube Music › {}{} ",
+                    if app.tab == Tab::Home {
+                        "Inicio › "
+                    } else {
+                        ""
+                    },
                     view.opened
                         .as_ref()
                         .map(|(title, _, _)| title.as_str())
@@ -656,7 +666,7 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
         .title(title.bold());
     app.areas.list = block.inner(area);
 
-    if matches!(app.tab, Tab::Youtube | Tab::Playlists) {
+    if matches!(app.tab, Tab::Home | Tab::Youtube | Tab::Playlists) {
         let error = app.remote_error();
         let message = error;
         if let Some(message) = message {
@@ -676,7 +686,7 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
                 "No hay canciones en esta colección.".into()
             }
             Tab::Youtube if !app.logged_in => "Pulsa / para buscar. Para conectar: Conectar cuenta en la app de escritorio; la sesión se comparte.".into(),
-            Tab::Youtube => "Pulsa / para buscar en YouTube Music. Tu música guardada está en 7 Mi biblioteca.".into(),
+            Tab::Youtube => "Pulsa / para buscar en YouTube Music. Tu música guardada está en 8 Mi biblioteca.".into(),
             Tab::Playlists if !app.logged_in => {
                 "Inicia sesión en la app de escritorio (Conectar cuenta); la sesión se comparte."
                     .into()
@@ -929,7 +939,7 @@ fn help_groups(app: &App) -> Vec<(&'static str, &'static str)> {
             ("j/k", "lista"),
             ("Enter", "aplicar"),
             ("t", "tema"),
-            ("1-9", "vista"),
+            ("1-0", "vista"),
             ("q", "salir"),
         ];
     }
@@ -940,7 +950,7 @@ fn help_groups(app: &App) -> Vec<(&'static str, &'static str)> {
         ("l", "letra"),
         ("q", "salir"),
     ];
-    if matches!(app.tab, Tab::Youtube | Tab::Playlists) {
+    if matches!(app.tab, Tab::Home | Tab::Youtube | Tab::Playlists) {
         groups.push(("r", "recargar"));
         if app.remote_view().opened.is_some() {
             groups.insert(1, ("p", "álbum completo"));
@@ -953,7 +963,7 @@ fn help_groups(app: &App) -> Vec<(&'static str, &'static str)> {
         groups.insert(1, ("Tab/⇧Tab", "columna"));
     }
     if app.is_local() {
-        groups.insert(0, ("1-9", "vista"));
+        groups.insert(0, ("1-0", "vista"));
         groups.insert(1, ("/", "buscar local"));
         groups.insert(2, ("Esc/⌫", "volver"));
         if app.local_artist() || app.local_results() {
@@ -975,7 +985,7 @@ fn help_groups(app: &App) -> Vec<(&'static str, &'static str)> {
     if !app.is_local() {
         groups.push(("/", "buscar"));
     }
-    groups.extend([("1-9", "vista"), ("t", "tema"), ("+/-", "volumen")]);
+    groups.extend([("1-0", "vista"), ("t", "tema"), ("+/-", "volumen")]);
     groups
 }
 
@@ -1162,7 +1172,7 @@ mod tests {
             .collect();
         assert!(screen.contains("Midnight City"));
         assert!(screen.contains("▶"));
-        assert_eq!(a.areas.tabs.len(), 9);
+        assert_eq!(a.areas.tabs.len(), 10);
         assert!(a.areas.buttons.iter().all(|r| r.height == 3));
         assert!(a.areas.progress.width > 0 && a.areas.volume.width > 0);
     }
@@ -1377,7 +1387,7 @@ mod section_tests {
                 .iter()
                 .map(|c| c.symbol())
                 .collect::<String>();
-            assert_eq!(a.areas.tabs.len(), 9);
+            assert_eq!(a.areas.tabs.len(), 10);
             assert!(a.areas.tabs.iter().all(|r| r.height == 1));
             if w == 160 {
                 for label in ["LOCAL", "YOUTUBE MUSIC", "GENERAL"] {
@@ -1415,6 +1425,101 @@ mod section_tests {
             };
             assert!(line(r.y + 1).contains("Local"));
             assert!(line(r.y + 2).contains("YT"));
+        }
+    }
+}
+
+fn draw_home(f: &mut Frame, app: &mut App, area: Rect) {
+    let p = app.palette;
+    let total = app.home.shelves.len();
+    let block = Block::bordered().title(format!(
+        " YouTube Music › Inicio · ‹ {}/{} › {} ",
+        if total == 0 { 0 } else { app.home.focus + 1 },
+        total,
+        if app.home_loading { spinner(app) } else { "" }
+    ));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    if let Some(error) = app.remote_error() {
+        f.render_widget(Paragraph::new(error).fg(p.hot), inner);
+        return;
+    }
+    if total == 0 {
+        f.render_widget(
+            Paragraph::new("No hay recomendaciones. Pulsa r para recargar."),
+            inner,
+        );
+        return;
+    }
+    let visible = app.home.visible_shelves(inner.width);
+    let rects = Layout::horizontal(vec![Constraint::Fill(1); visible.len()]).split(inner);
+    for (index, rect) in visible.zip(rects.iter()) {
+        let focused = index == app.home.focus;
+        let block = Block::bordered()
+            .title(app.home.shelves[index].as_str())
+            .border_style(Style::new().fg(if focused { p.accent } else { p.dim }));
+        app.areas.columns.push((index, block.inner(*rect)));
+        let rows: Vec<_> = app.home.columns[index]
+            .iter()
+            .enumerate()
+            .map(|(i, row)| {
+                let (icon, title, subtitle) = row.label();
+                Row::new([format!(
+                    "{} {title} — {subtitle}",
+                    icon.split(' ').next().unwrap_or_default()
+                )])
+                .style(stripe(i, p))
+            })
+            .collect();
+        let table = Table::new(rows, [Constraint::Fill(1)])
+            .block(block)
+            .row_highlight_style(Style::new().bg(p.selected).fg(p.accent))
+            .highlight_symbol("› ");
+        let state = if focused {
+            &mut app.table
+        } else {
+            &mut app.home.selections[index]
+        };
+        f.render_stateful_widget(table, *rect, state);
+    }
+}
+
+#[cfg(test)]
+mod home_tests {
+    use super::*;
+    use ratatui::{Terminal, backend::TestBackend};
+
+    #[test]
+    fn home_columns_render_and_follow_focus_at_supported_sizes() {
+        for (w, h, count) in [(80, 24, 2), (160, 45, 4)] {
+            let mut app = crate::app::tests::app(Vec::new());
+            app.home.home(crate::youtube::home_tests::shelves());
+            app.home_loaded = true;
+            app.set_tab(Tab::Home);
+            let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
+            terminal.draw(|f| draw(f, &mut app)).unwrap();
+            assert_eq!(app.areas.columns.len(), count);
+            let screen: String = terminal
+                .backend()
+                .buffer()
+                .content
+                .iter()
+                .map(|c| c.symbol())
+                .collect();
+            assert!(screen.contains("YouTube Music › Inicio"));
+            assert!(screen.contains("‹ 1/15 ›"));
+            assert!(screen.contains("Estante 0") && screen.contains("Estante 1"));
+            app.focus_column(8);
+            terminal.draw(|f| draw(f, &mut app)).unwrap();
+            assert!(app.areas.columns.iter().any(|(i, _)| *i == 8));
+            let screen: String = terminal
+                .backend()
+                .buffer()
+                .content
+                .iter()
+                .map(|c| c.symbol())
+                .collect();
+            assert!(screen.contains("‹ 9/15 ›") && screen.contains("Estante 8"));
         }
     }
 }

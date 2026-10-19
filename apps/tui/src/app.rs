@@ -18,17 +18,19 @@ pub enum Tab {
     Folders,
     LocalSearch,
     Queue,
+    Home,
     Youtube,
     Playlists,
     Equalizer,
 }
 
-pub const TABS: [Tab; 9] = [
+pub const TABS: [Tab; 10] = [
     Tab::Library,
     Tab::Albums,
     Tab::Artists,
     Tab::Folders,
     Tab::LocalSearch,
+    Tab::Home,
     Tab::Youtube,
     Tab::Playlists,
     Tab::Queue,
@@ -44,6 +46,7 @@ impl Tab {
             Tab::Folders => "Carpetas",
             Tab::LocalSearch => "Buscar en local",
             Tab::Queue => "Cola",
+            Tab::Home => "Inicio",
             Tab::Youtube => "Buscar",
             Tab::Playlists => "Mi biblioteca",
             Tab::Equalizer => "Ecualizador",
@@ -79,6 +82,7 @@ pub struct Areas {
 pub enum NetworkAction {
     Account,
     Search,
+    Home,
     Library,
     Open(YoutubeRow, usize),
 }
@@ -87,6 +91,7 @@ pub enum NetworkAction {
 pub enum NetworkResult {
     Account(Result<std::sync::Arc<YtMusic>, String>, bool),
     Lyrics(String, Option<String>),
+    Home(Result<Vec<mp_ytmusic::Shelf>, String>),
     Search(Result<mp_ytmusic::SearchResults, String>),
     Artist(Tab, usize, Result<mp_ytmusic::ArtistPage, String>),
     Library(bool, Result<Option<mp_ytmusic::Library>, String>),
@@ -126,6 +131,9 @@ pub struct App {
         std::sync::mpsc::Sender<NetworkResult>,
         std::sync::mpsc::Receiver<NetworkResult>,
     ),
+    pub home: YoutubeView,
+    pub home_loaded: bool,
+    pub home_loading: bool,
     pub yt_view: YoutubeView,
     pub playlists: YoutubeView,
     pub yt_query: String,
@@ -200,6 +208,9 @@ impl App {
             runtime,
             youtube,
             net: std::sync::mpsc::channel(),
+            home: YoutubeView::default(),
+            home_loaded: false,
+            home_loading: false,
             yt_view: YoutubeView::default(),
             playlists: YoutubeView::default(),
             yt_query: String::new(),
@@ -394,7 +405,7 @@ impl App {
                 self.local_rows(self.local.state.focus).len()
             }
             Tab::Queue => self.queue.len(),
-            Tab::Youtube | Tab::Playlists => {
+            Tab::Home | Tab::Youtube | Tab::Playlists => {
                 if self.remote_error().is_some() {
                     0
                 } else {
@@ -406,7 +417,8 @@ impl App {
 
     pub fn set_tab(&mut self, tab: Tab) {
         if self.search_results() {
-            self.yt_view.selections[self.yt_view.focus] = self.table;
+            let focus = self.remote_view().focus;
+            self.remote_view_mut().selections[focus] = self.table;
         }
         if self.is_local() {
             self.local.state.tables[self.local.state.focus] = self.table;
@@ -433,13 +445,16 @@ impl App {
         self.lyrics = None;
         self.searching = false;
         self.last_click = None;
-        if matches!(tab, Tab::Youtube | Tab::Playlists) {
+        if matches!(tab, Tab::Home | Tab::Youtube | Tab::Playlists) {
             if !self.logged_in && !self.account_checking {
                 self.account_checking = true;
                 self.schedule(NetworkAction::Account, "Comprobando cuenta…");
             } else if self.logged_in && !self.library_loaded {
                 self.schedule(NetworkAction::Library, "Cargando biblioteca…");
             }
+        }
+        if tab == Tab::Home && !self.home_loaded && !self.home_loading {
+            self.schedule(NetworkAction::Home, "Cargando inicio…");
         }
         if tab == Tab::Youtube && !self.yt_view.searched && self.yt_view.opened.is_none() {
             self.yt_view.rows.clear();
@@ -453,7 +468,7 @@ impl App {
             (self.row_count() > 0).then_some(start.min(self.row_count().saturating_sub(1))),
         );
         if self.search_results() {
-            self.table = self.yt_view.selections[self.yt_view.focus];
+            self.table = self.remote_view().selections[self.remote_view().focus];
         }
         if self.is_local() {
             self.filter = self.local.state.filter.clone();
@@ -479,7 +494,7 @@ impl App {
         if self.local_artist() || self.local_results() {
             self.local.state.focus
         } else {
-            self.yt_view.focus
+            self.remote_view().focus
         }
     }
 
@@ -571,7 +586,9 @@ impl App {
     }
 
     pub fn search_results(&self) -> bool {
-        self.tab == Tab::Youtube && self.yt_view.results() && self.lyrics.is_none()
+        matches!(self.tab, Tab::Youtube | Tab::Home)
+            && self.remote_view().results()
+            && self.lyrics.is_none()
     }
 
     pub fn focus_column(&mut self, step: isize) {
@@ -590,9 +607,13 @@ impl App {
             self.last_click = None;
             return;
         }
-        self.yt_view.selections[self.yt_view.focus] = self.table;
-        self.yt_view.focus_column(step);
-        self.table = self.yt_view.selections[self.yt_view.focus];
+        if self.remote_view().selections.is_empty() {
+            return;
+        }
+        let focus = self.remote_view().focus;
+        self.remote_view_mut().selections[focus] = self.table;
+        self.remote_view_mut().focus_column(step);
+        self.table = self.remote_view().selections[self.remote_view().focus];
         self.last_click = None;
     }
 
@@ -675,12 +696,18 @@ impl App {
                 None => return,
             },
             Tab::Queue => (self.queue.clone(), sel),
-            Tab::Youtube | Tab::Playlists => {
+            Tab::Home | Tab::Youtube | Tab::Playlists => {
                 let Some(row) = self.remote_view().rows.get(sel).cloned() else {
                     return;
                 };
                 match row {
-                    YoutubeRow::Track(_) => (self.remote_view().tracks(), sel),
+                    YoutubeRow::Track(_) => (
+                        self.remote_view().tracks(),
+                        self.remote_view().rows[..sel]
+                            .iter()
+                            .filter(|r| matches!(r, YoutubeRow::Track(_)))
+                            .count(),
+                    ),
                     _ => {
                         self.schedule(NetworkAction::Open(row, sel), "Abriendo colección…");
                         return;
@@ -745,7 +772,9 @@ impl App {
     }
 
     pub fn remote_view(&self) -> &YoutubeView {
-        if self.tab == Tab::Playlists {
+        if self.tab == Tab::Home {
+            &self.home
+        } else if self.tab == Tab::Playlists {
             &self.playlists
         } else {
             &self.yt_view
@@ -753,7 +782,9 @@ impl App {
     }
 
     pub fn remote_view_mut(&mut self) -> &mut YoutubeView {
-        if self.tab == Tab::Playlists {
+        if self.tab == Tab::Home {
+            &mut self.home
+        } else if self.tab == Tab::Playlists {
             &mut self.playlists
         } else {
             &mut self.yt_view
@@ -786,15 +817,15 @@ impl App {
                 self.filter.clear();
                 self.table.select((self.row_count() > 0).then_some(0));
             }
-        } else if matches!(self.tab, Tab::Youtube | Tab::Playlists) {
+        } else if matches!(self.tab, Tab::Home | Tab::Youtube | Tab::Playlists) {
             if let Some(selection) = self.remote_view_mut().back() {
                 self.table = if self.search_results() {
-                    self.yt_view.selections[self.yt_view.focus]
+                    self.remote_view().selections[self.remote_view().focus]
                 } else {
                     TableState::default().with_selected(Some(selection))
                 };
             } else if self.search_results() {
-                self.yt_view.error = None;
+                self.remote_view_mut().error = None;
             } else {
                 if self.tab == Tab::Youtube && !self.yt_view.searched {
                     self.yt_view.rows.clear();
@@ -810,7 +841,16 @@ impl App {
     }
 
     pub fn schedule(&mut self, action: NetworkAction, message: &str) {
+        if matches!(self.pending, Some(NetworkAction::Home))
+            && !matches!(action, NetworkAction::Home)
+        {
+            self.home_loading = false;
+        }
         match &action {
+            NetworkAction::Home => {
+                self.home.error = None;
+                self.home_loading = true;
+            }
             NetworkAction::Search => self.yt_view.error = None,
             NetworkAction::Library => {
                 self.playlists.error = None;
@@ -818,7 +858,8 @@ impl App {
             }
             NetworkAction::Open(..) => {
                 if self.search_results() {
-                    self.yt_view.selections[self.yt_view.focus] = self.table;
+                    let focus = self.remote_view().focus;
+                    self.remote_view_mut().selections[focus] = self.table;
                 }
                 self.remote_view_mut().error = None;
             }
@@ -844,6 +885,7 @@ impl App {
         let (Ok(runtime), Ok(yt)) = (&self.runtime, &self.youtube) else {
             self.message = None;
             self.account_checking = false;
+            self.home_loading = false;
             return;
         };
         let (yt, tx, tab) = (yt.clone(), self.net.0.clone(), self.tab);
@@ -864,6 +906,7 @@ impl App {
                     };
                     NetworkResult::Account(fresh, logged_in)
                 }
+                NetworkAction::Home => NetworkResult::Home(yt.home().await.map_err(err)),
                 NetworkAction::Search => {
                     NetworkResult::Search(yt.search(&query).await.map_err(err))
                 }
@@ -927,6 +970,11 @@ impl App {
                 }
                 return;
             }
+            NetworkResult::Home(r) => {
+                self.home_loading = false;
+                self.home_loaded = true;
+                (Tab::Home, r.map(|shelves| self.home.home(shelves)))
+            }
             NetworkResult::Search(r) => (Tab::Youtube, r.map(|res| self.yt_view.search(res))),
             NetworkResult::Library(logged_in, r) => {
                 self.library_loaded = true;
@@ -948,7 +996,9 @@ impl App {
                 )
             }
             NetworkResult::Artist(tab, selection, r) => {
-                let view = if tab == Tab::Playlists {
+                let view = if tab == Tab::Home {
+                    &mut self.home
+                } else if tab == Tab::Playlists {
                     &mut self.playlists
                 } else {
                     &mut self.yt_view
@@ -956,7 +1006,9 @@ impl App {
                 (tab, r.map(|page| view.artist(page, selection)))
             }
             NetworkResult::Open(tab, title, selection, r) => {
-                let view = if tab == Tab::Playlists {
+                let view = if tab == Tab::Home {
+                    &mut self.home
+                } else if tab == Tab::Playlists {
                     &mut self.playlists
                 } else {
                     &mut self.yt_view
@@ -964,7 +1016,9 @@ impl App {
                 (tab, r.map(|tracks| view.open(title, tracks, selection)))
             }
         };
-        let view = if tab == Tab::Playlists {
+        let view = if tab == Tab::Home {
+            &mut self.home
+        } else if tab == Tab::Playlists {
             &mut self.playlists
         } else {
             &mut self.yt_view
@@ -976,7 +1030,7 @@ impl App {
             || (tab == Tab::Playlists && self.tab == Tab::Youtube && self.yt_query.is_empty())
         {
             self.table = if self.search_results() {
-                self.yt_view.selections[self.yt_view.focus]
+                self.remote_view().selections[self.remote_view().focus]
             } else {
                 TableState::default().with_selected((self.row_count() > 0).then_some(0))
             };
@@ -1287,5 +1341,71 @@ pub mod tests {
         a.cycle_tab(1);
         a.cycle_tab(1);
         assert_eq!(a.tab, Tab::Library);
+    }
+}
+
+#[cfg(test)]
+mod home_tests {
+    use super::*;
+
+    #[test]
+    fn home_enter_queues_only_songs_and_back_restores_shelf() {
+        let mut app = super::tests::app(Vec::new());
+        app.home.home(crate::youtube::home_tests::shelves());
+        app.home_loaded = true;
+        app.set_tab(Tab::Home);
+        app.focus_column(5);
+        app.table.select(Some(2));
+        app.play_selected();
+        assert_eq!(
+            app.queue
+                .iter()
+                .map(|t| t.title.as_str())
+                .collect::<Vec<_>>(),
+            ["Uno", "Dos"]
+        );
+        assert_eq!(app.player.status().index, Some(1));
+        app.table.select(Some(1));
+        app.play_selected();
+        assert!(matches!(
+            app.pending,
+            Some(NetworkAction::Open(YoutubeRow::Collection(_), 1))
+        ));
+        app.apply_network(NetworkResult::Open(
+            Tab::Home,
+            "Disco".into(),
+            1,
+            Ok(vec![super::tests::track("Tema", "A", "B")]),
+        ));
+        app.back();
+        assert_eq!(app.column_focus(), 5);
+        assert_eq!(app.table.selected(), Some(1));
+        app.apply_network(NetworkResult::Artist(
+            Tab::Home,
+            1,
+            Ok(crate::youtube::tests::artist_page()),
+        ));
+        assert_eq!(
+            app.remote_view().artist_name.as_deref(),
+            Some("Artista de prueba")
+        );
+        app.back();
+        assert_eq!(app.column_focus(), 5);
+        assert_eq!(app.table.selected(), Some(1));
+    }
+
+    #[test]
+    fn home_load_is_lazy_and_error_is_retryable() {
+        let mut app = super::tests::app(Vec::new());
+        assert!(!app.home_loaded && !app.home_loading);
+        app.set_tab(Tab::Home);
+        assert!(matches!(app.pending, Some(NetworkAction::Home)));
+        assert!(app.home_loading);
+        app.pending = None;
+        app.apply_network(NetworkResult::Home(Err("falló".into())));
+        assert!(!app.home_loading);
+        assert!(app.remote_error().unwrap().contains("falló"));
+        app.schedule(NetworkAction::Home, "Cargando inicio…");
+        assert!(app.home_loading && app.home.error.is_none());
     }
 }

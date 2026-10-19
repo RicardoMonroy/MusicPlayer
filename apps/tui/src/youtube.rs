@@ -31,8 +31,10 @@ impl YoutubeRow {
 pub struct YoutubeView {
     pub history: Vec<YoutubeView>,
     pub artist_name: Option<String>,
-    pub columns: [Vec<YoutubeRow>; 4],
-    pub selections: [ratatui::widgets::TableState; 4],
+    pub columns: Vec<Vec<YoutubeRow>>,
+    pub shelves: Vec<String>,
+    pub window: usize,
+    pub selections: Vec<ratatui::widgets::TableState>,
     pub focus: usize,
     pub searched: bool,
     pub top: Option<Top>,
@@ -43,12 +45,54 @@ pub struct YoutubeView {
 }
 
 impl YoutubeView {
+    pub fn home(&mut self, shelves: Vec<mp_ytmusic::Shelf>) {
+        *self = Self::default();
+        for shelf in shelves {
+            self.shelves.push(shelf.title);
+            self.columns.push(
+                shelf
+                    .items
+                    .into_iter()
+                    .map(|item| match item {
+                        mp_ytmusic::HomeItem::Track(t) => YoutubeRow::Track(t),
+                        mp_ytmusic::HomeItem::Collection(c) => YoutubeRow::Collection(c),
+                    })
+                    .collect(),
+            );
+        }
+        self.selections = self
+            .columns
+            .iter()
+            .map(|rows| {
+                ratatui::widgets::TableState::default()
+                    .with_selected((!rows.is_empty()).then_some(0))
+            })
+            .collect();
+        self.rows = self.columns.first().cloned().unwrap_or_default();
+    }
+
+    pub fn home_root(&self) -> bool {
+        self.artist_name.is_none() && self.opened.is_none()
+    }
+
+    pub fn visible_shelves(&mut self, width: u16) -> std::ops::Range<usize> {
+        let count = (width as usize / 30).max(1).min(self.shelves.len());
+        if self.focus < self.window {
+            self.window = self.focus;
+        }
+        if self.focus >= self.window + count {
+            self.window = self.focus + 1 - count;
+        }
+        self.window = self.window.min(self.shelves.len().saturating_sub(count));
+        self.window..self.window + count
+    }
+
     pub fn search(&mut self, results: SearchResults) {
         self.history.clear();
         self.artist_name = None;
         self.songs = results.tracks.len();
         self.top = results.top;
-        self.columns = [
+        self.columns = vec![
             results
                 .tracks
                 .into_iter()
@@ -71,10 +115,12 @@ impl YoutubeView {
                 .map(YoutubeRow::Collection)
                 .collect(),
         ];
-        self.selections = std::array::from_fn(|i| {
-            ratatui::widgets::TableState::default()
-                .with_selected((!self.columns[i].is_empty()).then_some(0))
-        });
+        self.selections = (0..self.columns.len())
+            .map(|i| {
+                ratatui::widgets::TableState::default()
+                    .with_selected((!self.columns[i].is_empty()).then_some(0))
+            })
+            .collect();
         self.focus = 0;
         self.searched = true;
         self.rows = self.columns[0].clone();
@@ -83,16 +129,22 @@ impl YoutubeView {
     }
 
     pub fn results(&self) -> bool {
-        (self.searched || self.artist_name.is_some()) && self.opened.is_none()
+        (self.searched || self.artist_name.is_some() || !self.shelves.is_empty())
+            && self.opened.is_none()
     }
 
     pub fn focus_column(&mut self, step: isize) {
+        if self.column_count() == 0 {
+            return;
+        }
         self.focus = (self.focus as isize + step).rem_euclid(self.column_count() as isize) as usize;
         self.rows = self.columns[self.focus].clone();
     }
 
     pub fn column_count(&self) -> usize {
-        if self.artist_name.is_some() {
+        if self.artist_name.is_none() && !self.shelves.is_empty() {
+            self.shelves.len()
+        } else if self.artist_name.is_some() {
             if self.columns[2].is_empty() { 2 } else { 3 }
         } else {
             4
@@ -115,7 +167,7 @@ impl YoutubeView {
         self.top = None;
         self.opened = None;
         self.songs = page.tracks.len();
-        self.columns = [
+        self.columns = vec![
             page.tracks.into_iter().map(YoutubeRow::Track).collect(),
             page.albums
                 .into_iter()
@@ -127,10 +179,12 @@ impl YoutubeView {
                 .collect(),
             Vec::new(),
         ];
-        self.selections = std::array::from_fn(|i| {
-            ratatui::widgets::TableState::default()
-                .with_selected((!self.columns[i].is_empty()).then_some(0))
-        });
+        self.selections = (0..self.columns.len())
+            .map(|i| {
+                ratatui::widgets::TableState::default()
+                    .with_selected((!self.columns[i].is_empty()).then_some(0))
+            })
+            .collect();
         self.focus = 1;
         self.rows = self.columns[1].clone();
         self.error = None;
@@ -303,5 +357,56 @@ pub mod tests {
         assert_eq!(view.back(), Some(2));
         assert_eq!(view.rows.len(), 3);
         assert_eq!(view.back(), None);
+    }
+}
+
+#[cfg(test)]
+pub mod home_tests {
+    use super::*;
+    use crate::app::tests::track;
+
+    pub fn shelves() -> Vec<mp_ytmusic::Shelf> {
+        (0..15)
+            .map(|i| mp_ytmusic::Shelf {
+                title: format!("Estante {i}"),
+                items: vec![
+                    mp_ytmusic::HomeItem::Track(track("Uno", "A", "B")),
+                    mp_ytmusic::HomeItem::Collection(Collection {
+                        kind: mp_ytmusic::Kind::Album,
+                        id: "album".into(),
+                        title: "Disco".into(),
+                        subtitle: "Autor".into(),
+                        cover: None,
+                    }),
+                    mp_ytmusic::HomeItem::Track(track("Dos", "A", "B")),
+                ],
+            })
+            .collect()
+    }
+
+    #[test]
+    fn home_columns_window_and_navigation() {
+        let mut view = YoutubeView::default();
+        view.home(shelves());
+        assert_eq!(view.visible_shelves(80), 0..2);
+        assert_eq!(view.visible_shelves(150), 0..5);
+        // A 150-column terminal leaves 22 columns for its sidebar and borders.
+        assert_eq!(view.visible_shelves(126).len(), 4);
+        view.focus_column(8);
+        assert_eq!(view.visible_shelves(80), 7..9);
+        view.selections[8].select(Some(2));
+        *view.selections[8].offset_mut() = 1;
+        view.artist(super::tests::artist_page(), 2);
+        view.open("Álbum".into(), vec![track("Tema", "A", "B")], 0);
+        view.back();
+        assert!(view.artist_name.is_some());
+        view.back();
+        assert!(view.home_root());
+        assert_eq!(view.focus, 8);
+        assert_eq!(view.selections[8].selected(), Some(2));
+        assert_eq!(view.selections[8].offset(), 1);
+        assert_eq!(view.visible_shelves(80), 7..9);
+        view.focus_column(-8);
+        assert_eq!(view.visible_shelves(80), 0..2);
     }
 }

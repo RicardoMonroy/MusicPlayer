@@ -34,6 +34,10 @@ export type Library = { playlists: Collection[]; albums: Collection[] };
 export const search = (query: string) => invoke<SearchResults>("yt_search", { query });
 export const openCollection = (c: Collection) =>
   invoke<Track[]>("yt_open", { kind: c.kind, id: c.id });
+export type HomeItem = { type: "track"; item: Track } | { type: "collection"; item: Collection };
+export type Shelf = { title: string; items: HomeItem[] };
+
+export const home = () => invoke<Shelf[]>("yt_home");
 export const artist = (id: string) => invoke<ArtistPage>("yt_artist", { id });
 export const loggedIn = () => invoke<boolean>("yt_logged_in");
 export const login = (path: string) => invoke("yt_login", { path });
