@@ -78,12 +78,18 @@ export async function scan(folder: string) {
   }
 }
 
+/**
+ * Bytes from a command that returns a raw `Response`. Dev builds get an
+ * ArrayBuffer, release builds a plain number array.
+ */
+const bytesOf = (b: ArrayBuffer | number[]) => (b instanceof ArrayBuffer ? b : new Uint8Array(b).buffer);
+
 const thumbs = new Map<string, Promise<string>>();
 /** Object URL of a small cached cover for the album `uri` belongs to ("" if none). */
 export function thumbnail(uri: string): Promise<string> {
   let p = thumbs.get(uri);
   if (!p) {
-    p = invoke<ArrayBuffer>("thumbnail", { uri }).then((b) =>
+    p = invoke<ArrayBuffer | number[]>("thumbnail", { uri }).then(bytesOf).then((b) =>
       b.byteLength ? URL.createObjectURL(new Blob([b], { type: "image/jpeg" })) : "",
     );
     thumbs.set(uri, p);
@@ -130,7 +136,7 @@ async function loadCover(track: Track | null) {
   if (player.coverUrl) URL.revokeObjectURL(player.coverUrl);
   player.coverUrl = "";
   if (!track) return;
-  const bytes = await invoke<ArrayBuffer>("cover", { track });
+  const bytes = bytesOf(await invoke<ArrayBuffer | number[]>("cover", { track }));
   if (bytes.byteLength === 0) return;
   player.coverUrl = URL.createObjectURL(new Blob([bytes]));
   player.accent = await averageColor(player.coverUrl);
