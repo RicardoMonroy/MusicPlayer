@@ -55,14 +55,14 @@ pub fn draw(f: &mut Frame, app: &mut App) {
             ),
             search,
         );
-    } else if app.lyrics.is_none() && app.tab == Tab::Library {
+    } else if app.lyrics.is_none() && app.is_local() {
         let [filter, rest] =
-            Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(main);
+            Layout::vertical([Constraint::Length(2), Constraint::Min(0)]).areas(main);
         main = rest;
         app.areas.search = filter;
         f.render_widget(
             Paragraph::new(format!(
-                "Filtro (f): {}{}",
+                "v: Canciones · Artistas · Discos · Carpetas\nFiltro (/): {}{}",
                 app.filter,
                 if app.searching { "▏" } else { "" }
             ))
@@ -72,6 +72,8 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     }
     if app.tab == Tab::Equalizer && app.lyrics.is_none() {
         crate::equalizer::draw(f, app, main);
+    } else if app.is_local() && !matches!(app.local.state.page, crate::local::Page::Songs) {
+        draw_local(f, app, main);
     } else if app.search_results() && app.remote_error().is_none() {
         draw_results(f, app, main);
     } else {
@@ -266,6 +268,111 @@ fn draw_results(f: &mut Frame, app: &mut App, area: Rect) {
     }
 }
 
+fn draw_local(f: &mut Frame, app: &mut App, area: Rect) {
+    use crate::local::{Page, Row as LocalRow};
+    let p = app.palette;
+    let mut body = area;
+    if let Page::Artist(name) = &app.local.state.page {
+        let albums: Vec<_> = app.albums.iter().filter(|a| a.artist == *name).collect();
+        let songs: usize = albums.iter().map(|a| a.tracks.len()).sum();
+        let [header, rest] =
+            Layout::vertical([Constraint::Length(4), Constraint::Min(0)]).areas(body);
+        body = rest;
+        f.render_widget(
+            Paragraph::new(format!(
+                "{} · {songs} canciones\nTab: columna · Enter: abrir álbum / reproducir canción",
+                crate::local::plural(albums.len(), "álbum", "álbumes")
+            ))
+            .block(Block::bordered().title(app.local.breadcrumb(&app.albums))),
+            header,
+        );
+    }
+    let artist = app.local_artist();
+    let count = if artist {
+        grid_columns(body.width).min(2)
+    } else {
+        1
+    };
+    if artist && count == 1 {
+        let [switch, rest] =
+            Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(body);
+        body = rest;
+        app.areas.switcher = switch;
+        f.render_widget(
+            Paragraph::new(format!(
+                "◀ {} ▶ · Tab",
+                ["Canciones", "Álbumes"][app.local.state.focus]
+            ))
+            .fg(p.accent),
+            switch,
+        );
+    }
+    let rects = Layout::horizontal(vec![Constraint::Fill(1); count]).split(body);
+    for (i, rect) in rects.iter().enumerate() {
+        let column = if artist && count == 1 {
+            app.local.state.focus
+        } else {
+            i
+        };
+        let title = if artist {
+            ["Canciones", "Álbumes"][column].to_string()
+        } else {
+            format!(
+                "{} · Orden: {} (o)",
+                app.local.breadcrumb(&app.albums),
+                app.local.order.label()
+            )
+        };
+        let block = Block::bordered().title(title).border_style(Style::new().fg(
+            if column == app.local.state.focus {
+                p.accent
+            } else {
+                p.dim
+            },
+        ));
+        if artist {
+            app.areas.columns.push((column, block.inner(*rect)));
+        } else {
+            app.areas.list = block.inner(*rect);
+        }
+        let rows: Vec<_> = app
+            .local_rows(column)
+            .iter()
+            .enumerate()
+            .map(|(index, row)| {
+                let text = match row {
+                    LocalRow::Album(a) if artist => {
+                        crate::local::album_label(&app.albums[*a], true)
+                    }
+                    _ => crate::local::label(row, &app.albums, &app.library, &app.folder),
+                };
+                let style = if matches!(row, LocalRow::Disc(_)) {
+                    Style::new().fg(p.accent).bold()
+                } else {
+                    stripe(index, p)
+                };
+                Row::new([text]).style(style)
+            })
+            .collect();
+        let table = Table::new(rows, [Constraint::Fill(1)])
+            .block(block)
+            .row_highlight_style(Style::new().bg(p.selected).fg(p.accent))
+            .highlight_symbol("› ");
+        // Non-column mouse mapping reserves the first inner line for a table header.
+        let table = if artist {
+            table
+        } else {
+            table.header(Row::new(["Enter: abrir / reproducir"]).fg(p.dim))
+        };
+        let state = if column == app.local.state.focus {
+            &mut app.table
+        } else {
+            &mut app.local.state.tables[column]
+        };
+        f.render_stateful_widget(table, *rect, state);
+    }
+}
+
 fn scroll_indicator(selected: Option<usize>, total: usize) -> String {
     format!(
         "{}/{}",
@@ -374,7 +481,7 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
 
     let (header, widths, rows, title): (Row, Vec<Constraint>, Vec<Row>, String) = match app.tab {
         Tab::Library | Tab::Queue => {
-            let tracks: Vec<_> = if app.tab == Tab::Library {
+            let tracks: Vec<_> = if app.is_local() {
                 app.filtered().into_iter().cloned().collect()
             } else {
                 app.queue.clone()
@@ -398,7 +505,15 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
                     Constraint::Length(8),
                 ],
                 rows,
-                format!(" {} · {} canciones ", app.tab.title(), tracks.len()),
+                format!(
+                    " {} · {} canciones ",
+                    if app.is_local() {
+                        app.local.breadcrumb(&app.albums)
+                    } else {
+                        app.tab.title().into()
+                    },
+                    tracks.len()
+                ),
             )
         }
         Tab::Youtube | Tab::Playlists => {
@@ -536,6 +651,20 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
             }
             Tab::Playlists => "No hay canciones en esta colección.".into(),
             Tab::Queue => "La cola está vacía. Elige algo en Biblioteca o Álbumes.".to_string(),
+            _ if app.scan.is_some() => {
+                let (done, total) = app.scan.unwrap_or_default();
+                if total == 0 {
+                    "Buscando archivos de música…".into()
+                } else {
+                    let width = 30;
+                    let full = done * width / total.max(1);
+                    format!(
+                        "Escaneando tu biblioteca…\n\n{}{}  {done} / {total}\n\nLa primera lectura puede tardar; las siguientes son casi instantáneas.",
+                        "█".repeat(full),
+                        "░".repeat(width - full)
+                    )
+                }
+            }
             _ if !app.filter.is_empty() => format!("Nada coincide con “{}”.", app.filter),
             _ => format!(
                 "No hay música en {}.\nEjecuta: musicplayer-tui <carpeta>",
@@ -801,15 +930,30 @@ fn help_groups(app: &App) -> Vec<(&'static str, &'static str)> {
     if app.search_results() {
         groups.insert(1, ("Tab/⇧Tab", "columna"));
     }
-    if app.tab == Tab::Library {
-        groups.push(("f", "filtrar"));
+    if app.is_local() {
+        groups.insert(0, ("v", "subvista"));
+        groups.insert(1, ("/", "filtrar"));
+        groups.insert(2, ("Esc/⌫", "volver"));
+        if app.local_artist() {
+            groups.insert(2, ("Tab", "columna"));
+        }
+        if matches!(app.local.state.page, crate::local::Page::Albums) {
+            groups.insert(2, ("o", "orden"));
+        }
+        if matches!(
+            app.local.state.page,
+            crate::local::Page::Album(_) | crate::local::Page::Folders(_)
+        ) {
+            groups.insert(2, ("p", "reproducir todo"));
+        }
+        if matches!(app.local.state.page, crate::local::Page::Album(_)) {
+            groups.insert(2, ("s", "mezclar"));
+        }
     }
-    groups.extend([
-        ("/", "buscar"),
-        ("1-6", "vista"),
-        ("t", "tema"),
-        ("+/-", "volumen"),
-    ]);
+    if !app.is_local() {
+        groups.push(("/", "buscar"));
+    }
+    groups.extend([("1-6", "vista"), ("t", "tema"), ("+/-", "volumen")]);
     groups
 }
 
@@ -892,6 +1036,61 @@ mod tests {
             }
             assert!(!a.areas.eq_presets.is_empty());
             assert!(!screen.contains("±5 s"));
+        }
+    }
+
+    #[test]
+    fn local_artist_and_multidisc_album_render_at_supported_sizes() {
+        use crate::local::Page;
+        for (width, height) in [(80, 24), (160, 45)] {
+            let mut a = app(crate::local::tests::discography());
+            a.open_local(Page::Artists);
+            a.play_selected();
+            assert!(a.local_artist());
+            assert_eq!(a.column_focus(), 1);
+            let mut term = Terminal::new(TestBackend::new(width, height)).unwrap();
+            term.draw(|f| draw(f, &mut a)).unwrap();
+            let screen = term
+                .backend()
+                .buffer()
+                .content
+                .iter()
+                .map(|c| c.symbol())
+                .collect::<String>();
+            for text in [
+                "Opeth",
+                "2 álbumes · 4 canciones",
+                "Canciones",
+                "Álbumes",
+                "1999 · Still Life · 3 canciones",
+            ] {
+                assert!(screen.contains(text), "missing {text}: {screen}");
+            }
+            assert_eq!(a.areas.columns.len(), 2);
+            a.table.select(Some(1));
+            a.play_selected();
+            term.draw(|f| draw(f, &mut a)).unwrap();
+            let screen = term
+                .backend()
+                .buffer()
+                .content
+                .iter()
+                .map(|c| c.symbol())
+                .collect::<String>();
+            for text in [
+                "Still Life",
+                "Disco 1",
+                "Disco 2",
+                "Inicio",
+                "Primera",
+                "Segunda",
+            ] {
+                assert!(screen.contains(text), "missing {text}: {screen}");
+            }
+            assert!(a.areas.columns.is_empty());
+            a.back();
+            assert!(a.local_artist());
+            assert_eq!(a.table.selected(), Some(1));
         }
     }
 

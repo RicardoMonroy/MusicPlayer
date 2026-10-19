@@ -33,7 +33,7 @@ impl Tab {
     pub fn title(self) -> &'static str {
         match self {
             Tab::Library => "Biblioteca",
-            Tab::Albums => "Álbumes",
+            Tab::Albums => "Discos",
             Tab::Queue => "Cola",
             Tab::Youtube => "Buscar",
             Tab::Playlists => "Playlists",
@@ -65,6 +65,8 @@ pub struct Areas {
     pub volume: Rect,
 }
 
+// One per user action; boxing the big variant would buy nothing.
+#[allow(clippy::large_enum_variant)]
 pub enum NetworkAction {
     Account,
     Search,
@@ -130,6 +132,10 @@ pub struct App {
     pub folder: PathBuf,
     pub library: Vec<Track>,
     pub albums: Vec<Album>,
+    /// (done, total) while the library is being scanned in the background.
+    pub scan: Option<(usize, usize)>,
+    scan_rx: Option<std::sync::mpsc::Receiver<ScanMsg>>,
+    pub local: crate::local::Browser,
     /// What mpv is playing, in order; `status.index` points into it.
     pub queue: Vec<Track>,
     pub status: Status,
@@ -142,12 +148,15 @@ pub struct App {
     pub quit: bool,
 }
 
+enum ScanMsg {
+    Progress(usize, usize),
+    Done(Vec<Track>),
+}
+
 impl App {
     pub fn new(player: Player, folder: PathBuf) -> Self {
-        let library = match mp_core::config::library_db() {
-            Some(db) => mp_local::scan_cached(&folder, &db),
-            None => mp_local::scan(&folder),
-        };
+        // Filled by `start_scan`, so the UI is up before a slow first scan finishes.
+        let library = Vec::new();
         let albums = group_albums(&library);
         let mut table = TableState::default();
         table.select((!library.is_empty()).then_some(0));
@@ -194,6 +203,9 @@ impl App {
             folder,
             library,
             albums,
+            scan: None,
+            scan_rx: None,
+            local: Default::default(),
             queue: Vec::new(),
             status: Status::default(),
             tab: Tab::Library,
@@ -205,7 +217,9 @@ impl App {
             quit: false,
         };
         app.schedule(NetworkAction::Account, "Comprobando cuenta…");
-        app.run_pending();
+        if !cfg!(test) {
+            app.run_pending();
+        }
         app
     }
 
@@ -242,7 +256,42 @@ impl App {
         }
     }
 
+    /// Scan the music folder on a worker thread; `tick` shows progress and the result.
+    pub fn start_scan(&mut self) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let folder = self.folder.clone();
+        std::thread::spawn(move || {
+            let tracks = match mp_core::config::library_db() {
+                Some(db) => mp_local::scan_cached_with_progress(&folder, &db, |d, t| {
+                    let _ = tx.send(ScanMsg::Progress(d, t));
+                }),
+                None => mp_local::scan(&folder),
+            };
+            let _ = tx.send(ScanMsg::Done(tracks));
+        });
+        self.scan = Some((0, 0));
+        self.scan_rx = Some(rx);
+    }
+
+    fn poll_scan(&mut self) {
+        let Some(rx) = &self.scan_rx else { return };
+        while let Ok(msg) = rx.try_recv() {
+            match msg {
+                ScanMsg::Progress(d, t) => self.scan = Some((d, t)),
+                ScanMsg::Done(tracks) => {
+                    self.albums = group_albums(&tracks);
+                    self.library = tracks;
+                    self.scan = None;
+                    self.scan_rx = None;
+                    self.table.select((self.row_count() > 0).then_some(0));
+                    return;
+                }
+            }
+        }
+    }
+
     pub fn tick(&mut self) {
+        self.poll_scan();
         if self.skin_checked.elapsed().as_secs() >= 2 {
             self.palette =
                 crate::palette::lookup(mp_core::config::skin().as_deref().unwrap_or("musicplayer"));
@@ -319,8 +368,7 @@ impl App {
     pub fn row_count(&self) -> usize {
         match self.tab {
             Tab::Equalizer => mp_core::eq::PRESETS.len(),
-            Tab::Library => self.filtered().len(),
-            Tab::Albums => self.albums.len(),
+            Tab::Library | Tab::Albums => self.local_rows(self.local.state.focus).len(),
             Tab::Queue => self.queue.len(),
             Tab::Youtube | Tab::Playlists => {
                 if self.remote_error().is_some() {
@@ -336,7 +384,23 @@ impl App {
         if self.search_results() {
             self.yt_view.selections[self.yt_view.focus] = self.table;
         }
+        if self.is_local() {
+            self.local.state.tables[self.local.state.focus] = self.table;
+            self.local.state.filter = self.filter.clone();
+        }
         self.tab = tab;
+        if tab == Tab::Albums
+            && !matches!(
+                self.local.state.page,
+                crate::local::Page::Albums | crate::local::Page::Album(_)
+            )
+        {
+            self.local = Default::default();
+            self.local.state.page = crate::local::Page::Albums;
+        } else if tab == Tab::Library && matches!(self.local.state.page, crate::local::Page::Albums)
+        {
+            self.local = Default::default();
+        }
         self.lyrics = None;
         self.searching = false;
         self.last_click = None;
@@ -362,6 +426,115 @@ impl App {
         if self.search_results() {
             self.table = self.yt_view.selections[self.yt_view.focus];
         }
+        if self.is_local() {
+            self.filter = self.local.state.filter.clone();
+            self.table = self.local.state.tables[self.local.state.focus];
+            if self.table.selected().is_none() && self.row_count() > 0 {
+                self.table.select(Some(0));
+            }
+        }
+    }
+
+    pub fn is_local(&self) -> bool {
+        matches!(self.tab, Tab::Library | Tab::Albums) && self.lyrics.is_none()
+    }
+
+    pub fn local_artist(&self) -> bool {
+        self.is_local() && matches!(self.local.state.page, crate::local::Page::Artist(_))
+    }
+
+    pub fn column_focus(&self) -> usize {
+        if self.local_artist() {
+            self.local.state.focus
+        } else {
+            self.yt_view.focus
+        }
+    }
+
+    pub fn local_rows(&self, column: usize) -> Vec<crate::local::Row> {
+        crate::local::rows(
+            &self.local.state.page,
+            column,
+            &self.library,
+            &self.albums,
+            &self.folder,
+            &self.filter,
+            self.local.order,
+        )
+    }
+
+    pub fn open_local(&mut self, page: crate::local::Page) {
+        self.local.open(page, self.table, &self.filter);
+        self.filter.clear();
+        self.table = self.local.state.tables[self.local.state.focus];
+        self.table.select((self.row_count() > 0).then_some(0));
+        self.last_click = None;
+    }
+
+    /// Switch sub-view (Canciones → Artistas → Discos → Carpetas). It starts a fresh
+    /// navigation, so the breadcrumb never piles sub-views on top of each other.
+    pub fn cycle_local(&mut self) {
+        use crate::local::{Page, Snapshot};
+        let root = self
+            .local
+            .history
+            .first()
+            .map_or(&self.local.state.page, |s| &s.page);
+        let page = match root {
+            Page::Songs => Page::Artists,
+            Page::Artists => Page::Albums,
+            Page::Albums => Page::Folders(String::new()),
+            _ => Page::Songs,
+        };
+        self.local.history.clear();
+        self.local.state = Snapshot {
+            page,
+            ..Default::default()
+        };
+        self.filter.clear();
+        self.table = TableState::default().with_selected((self.row_count() > 0).then_some(0));
+    }
+
+    fn play_local_queue(&mut self, queue: Vec<Track>, start: usize) {
+        if start < queue.len()
+            && self
+                .player
+                .play_queue(
+                    &queue.iter().map(|t| t.uri.clone()).collect::<Vec<_>>(),
+                    start,
+                )
+                .is_ok()
+        {
+            self.queue = queue;
+        }
+    }
+
+    pub fn local_collection(&mut self, shuffle: bool) {
+        use crate::local::Page;
+        let mut tracks = match &self.local.state.page {
+            Page::Album(i) => self.albums[*i].tracks.clone(),
+            Page::Folders(path) => self
+                .library
+                .iter()
+                .filter(|t| crate::local::under(t, &self.folder, path))
+                .cloned()
+                .collect(),
+            _ => return,
+        };
+        if shuffle {
+            use std::time::{SystemTime, UNIX_EPOCH};
+            let mut seed = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos() as u64;
+            for i in (1..tracks.len()).rev() {
+                seed ^= seed << 13;
+                seed ^= seed >> 7;
+                seed ^= seed << 17;
+                tracks.swap(i, (seed % (i as u64 + 1)) as usize);
+            }
+        }
+        self.play_local_queue(tracks, 0);
     }
 
     pub fn search_results(&self) -> bool {
@@ -369,6 +542,20 @@ impl App {
     }
 
     pub fn focus_column(&mut self, step: isize) {
+        if self.local_artist() {
+            self.local.state.tables[self.local.state.focus] = self.table;
+            self.local.state.focus =
+                (self.local.state.focus as isize + step).rem_euclid(2) as usize;
+            self.table = self.local.state.tables[self.local.state.focus];
+            let count = self.row_count();
+            self.table.select(if count == 0 {
+                None
+            } else {
+                Some(self.table.selected().unwrap_or(0).min(count - 1))
+            });
+            self.last_click = None;
+            return;
+        }
         self.yt_view.selections[self.yt_view.focus] = self.table;
         self.yt_view.focus_column(step);
         self.table = self.yt_view.selections[self.yt_view.focus];
@@ -396,6 +583,48 @@ impl App {
 
     /// Play the selected row: the visible list becomes the queue.
     pub fn play_selected(&mut self) {
+        if self.is_local() {
+            use crate::local::{Page, Row};
+            let rows = self.local_rows(self.local.state.focus);
+            let sel = self.table.selected().unwrap_or(0);
+            match rows.get(sel) {
+                Some(Row::Artist(name)) => self.open_local(Page::Artist(name.clone())),
+                Some(Row::Album(i)) => self.open_local(Page::Album(*i)),
+                Some(Row::Folder(path)) => self.open_local(Page::Folders(path.clone())),
+                Some(Row::Track(t)) => {
+                    let queue: Vec<_> = if let Page::Album(i) = self.local.state.page {
+                        self.albums[i].tracks.clone()
+                    } else if self.local_artist() {
+                        crate::local::rows(
+                            &self.local.state.page,
+                            0,
+                            &self.library,
+                            &self.albums,
+                            &self.folder,
+                            "",
+                            self.local.order,
+                        )
+                        .into_iter()
+                        .filter_map(|r| if let Row::Track(t) = r { Some(t) } else { None })
+                        .collect()
+                    } else {
+                        rows.iter()
+                            .filter_map(|r| {
+                                if let Row::Track(t) = r {
+                                    Some(t.clone())
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect()
+                    };
+                    let start = queue.iter().position(|x| x.uri == t.uri).unwrap_or(0);
+                    self.play_local_queue(queue, start);
+                }
+                _ => {}
+            }
+            return;
+        }
         let Some(sel) = self.table.selected() else {
             return;
         };
@@ -490,7 +719,20 @@ impl App {
         if self.lyrics.take().is_some() {
             return;
         }
-        if matches!(self.tab, Tab::Youtube | Tab::Playlists) {
+        if self.is_local() {
+            if let Some(state) = self.local.back() {
+                self.filter = state.filter;
+                self.table = state.tables[state.focus];
+            } else if let crate::local::Page::Folders(path) = &self.local.state.page {
+                let parent = path.rsplit_once('/').map_or("", |(p, _)| p).to_string();
+                self.local.state.page = crate::local::Page::Folders(parent);
+                self.filter.clear();
+                self.table.select((self.row_count() > 0).then_some(0));
+            } else {
+                self.filter.clear();
+                self.table.select((self.row_count() > 0).then_some(0));
+            }
+        } else if matches!(self.tab, Tab::Youtube | Tab::Playlists) {
             if let Some(selection) = self.remote_view_mut().back() {
                 self.table = if self.search_results() {
                     self.yt_view.selections[self.yt_view.focus]
@@ -768,19 +1010,7 @@ fn youtube_dir() -> Result<PathBuf, String> {
 }
 
 pub fn group_albums(tracks: &[Track]) -> Vec<Album> {
-    let mut albums: Vec<Album> = Vec::new();
-    // Tracks come sorted by artist, album, track number, so albums are contiguous.
-    for t in tracks {
-        match albums.last_mut() {
-            Some(a) if a.artist == t.artist && a.name == t.album => a.tracks.push(t.clone()),
-            _ => albums.push(Album {
-                artist: t.artist.clone(),
-                name: t.album.clone(),
-                tracks: vec![t.clone()],
-            }),
-        }
-    }
-    albums
+    crate::local::group(tracks)
 }
 
 pub fn fmt_time(s: f64) -> String {
@@ -804,12 +1034,14 @@ pub mod tests {
             track_no: None,
             duration: Some(125.0),
             cover: None,
+            ..Default::default()
         }
     }
 
     pub fn app(tracks: Vec<Track>) -> App {
         let player = Player::new().unwrap();
         let mut a = App::new(player, PathBuf::from("/nonexistent"));
+        a.pending = None;
         a.albums = group_albums(&tracks);
         a.library = tracks;
         a.table.select(Some(0));

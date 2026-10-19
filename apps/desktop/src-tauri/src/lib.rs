@@ -24,14 +24,30 @@ fn music_folder() -> Option<PathBuf> {
 
 /// Scan `path` and remember it as the music folder.
 #[tauri::command]
-async fn scan_folder(path: PathBuf) -> CmdResult<Vec<Track>> {
+async fn scan_folder(path: PathBuf, app: AppHandle) -> CmdResult<Vec<Track>> {
     mp_core::config::set_music_folder(&path).map_err(err)?;
     tauri::async_runtime::spawn_blocking(move || match mp_core::config::library_db() {
-        Some(db) => mp_local::scan_cached(&path, &db),
+        Some(db) => mp_local::scan_cached_with_progress(&path, &db, |done, total| {
+            let _ = app.emit("scan-progress", (done, total));
+        }),
         None => mp_local::scan(&path),
     })
     .await
     .map_err(err)
+}
+
+/// Small cached cover for album grids; empty when the album has no art.
+#[tauri::command]
+async fn thumbnail(uri: String) -> Response {
+    let bytes = tauri::async_runtime::spawn_blocking(move || {
+        let dir = dirs::cache_dir()?.join("musicplayer").join("thumbs");
+        mp_local::thumbnail(uri.as_ref(), &dir)
+    })
+    .await
+    .ok()
+    .flatten()
+    .unwrap_or_default();
+    Response::new(bytes)
 }
 
 /// Replace the queue with `tracks` and start at `index`.
@@ -316,6 +332,7 @@ pub fn run() {
             set_repeat,
             set_shuffle,
             cover,
+            thumbnail,
             lyrics,
             yt_search,
             yt_open,

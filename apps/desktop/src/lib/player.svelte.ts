@@ -9,6 +9,10 @@ export type Track = {
   track_no: number | null;
   duration: number | null;
   cover: string | null;
+  album_artist?: string | null;
+  year?: number | null;
+  disc_no?: number | null;
+  genre?: string | null;
 };
 
 export type Status = {
@@ -50,6 +54,8 @@ export const player = $state({
   queue: [] as Track[],
   eq: { enabled: false, preamp: 0, gains: Array(10).fill(0) } as Equalizer,
   eqPresets: [] as [string, number[]][],
+  /** Library scan progress; null when no scan is running. */
+  scan: null as { done: number; total: number } | null,
 });
 
 let noticeTimer: ReturnType<typeof setTimeout> | undefined;
@@ -58,9 +64,31 @@ let noticeTimer: ReturnType<typeof setTimeout> | undefined;
 const LEGACY_FOLDER_KEY = "library-folder";
 let coverFor = "";
 
-/** Scan `folder` and remember it (shared with the TUI). */
+/** Scan `folder` and remember it (shared with the TUI). Progress lands in `player.scan`. */
 export async function scan(folder: string) {
-  player.tracks = await invoke<Track[]>("scan_folder", { path: folder });
+  player.scan = { done: 0, total: 0 };
+  const off = await listen<[number, number]>("scan-progress", (e) => {
+    player.scan = { done: e.payload[0], total: e.payload[1] };
+  });
+  try {
+    player.tracks = await invoke<Track[]>("scan_folder", { path: folder });
+  } finally {
+    off();
+    player.scan = null;
+  }
+}
+
+const thumbs = new Map<string, Promise<string>>();
+/** Object URL of a small cached cover for the album `uri` belongs to ("" if none). */
+export function thumbnail(uri: string): Promise<string> {
+  let p = thumbs.get(uri);
+  if (!p) {
+    p = invoke<ArrayBuffer>("thumbnail", { uri }).then((b) =>
+      b.byteLength ? URL.createObjectURL(new Blob([b], { type: "image/jpeg" })) : "",
+    );
+    thumbs.set(uri, p);
+  }
+  return p;
 }
 
 export async function savedFolder(): Promise<string | null> {

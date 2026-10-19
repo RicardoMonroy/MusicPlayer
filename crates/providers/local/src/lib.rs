@@ -31,11 +31,28 @@ pub fn scan(root: &Path) -> Vec<Track> {
         .filter(|entry| entry.file_type().is_file() && is_audio(entry.path()))
         .map(|entry| read_track(entry.path()))
         .collect();
-    tracks.sort_by(|a, b| {
-        (&a.artist, &a.album, a.track_no, &a.title)
-            .cmp(&(&b.artist, &b.album, b.track_no, &b.title))
-    });
+    sort_tracks(&mut tracks);
     tracks
+}
+
+/// Discography order: album artist, then albums by year, then disc and track.
+fn sort_tracks(tracks: &mut [Track]) {
+    tracks.sort_by(|a, b| {
+        let key = |t: &Track| {
+            (
+                t.album_artist
+                    .clone()
+                    .unwrap_or_else(|| t.artist.clone())
+                    .to_lowercase(),
+                t.year,
+                t.album.to_lowercase(),
+                t.disc_no,
+                t.track_no,
+                t.title.clone(),
+            )
+        };
+        key(a).cmp(&key(b))
+    });
 }
 
 fn read_track(path: &Path) -> Track {
@@ -67,15 +84,32 @@ fn read_track(path: &Path) -> Track {
             .as_ref()
             .map(|file| file.properties().duration().as_secs_f64()),
         cover: None,
+        album_artist: tag.and_then(|tag| {
+            tag.get_string(lofty::tag::ItemKey::AlbumArtist)
+                .map(str::to_owned)
+        }),
+        year: tag.and_then(|tag| tag.date()).map(|d| u32::from(d.year)),
+        disc_no: tag.and_then(|tag| tag.disk()),
+        genre: tag.and_then(|tag| tag.genre()).map(|g| g.into_owned()),
     }
 }
 
 /// Scan a library, reusing tags when file modification time and size match.
 pub fn scan_cached(root: &Path, db: &Path) -> Vec<Track> {
-    cached(root, db).unwrap_or_else(|| scan(root))
+    scan_cached_with_progress(root, db, |_, _| {})
 }
 
-fn cached(root: &Path, db: &Path) -> Option<Vec<Track>> {
+/// Like `scan_cached`, calling `progress(done, total)` as files are read, so a UI
+/// can show how far a first (slow, tag-reading) scan has got.
+pub fn scan_cached_with_progress(
+    root: &Path,
+    db: &Path,
+    mut progress: impl FnMut(usize, usize),
+) -> Vec<Track> {
+    cached(root, db, &mut progress).unwrap_or_else(|| scan(root))
+}
+
+fn cached(root: &Path, db: &Path, progress: &mut dyn FnMut(usize, usize)) -> Option<Vec<Track>> {
     use rusqlite::{Connection, OptionalExtension, params};
 
     let root = std::path::absolute(root).ok()?;
@@ -84,20 +118,31 @@ fn cached(root: &Path, db: &Path) -> Option<Vec<Track>> {
     }
     let mut conn = Connection::open(db).ok()?;
     conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS tracks (
+        // v3 adds genre (v2: album_artist, year, disc_no); old tables are just left behind.
+        "DROP TABLE IF EXISTS tracks; DROP TABLE IF EXISTS tracks_v2;
+        CREATE TABLE IF NOT EXISTS tracks_v3 (
             path TEXT PRIMARY KEY, mtime TEXT NOT NULL, size TEXT NOT NULL,
             title TEXT NOT NULL, artist TEXT NOT NULL, album TEXT NOT NULL,
-            track_no INTEGER, duration REAL, cover TEXT
+            track_no INTEGER, duration REAL, cover TEXT,
+            album_artist TEXT, year INTEGER, disc_no INTEGER, genre TEXT
         );",
     )
     .ok()?;
     let tx = conn.transaction().ok()?;
     let mut tracks = Vec::new();
-    for entry in WalkDir::new(&root).into_iter().filter_map(Result::ok) {
-        let path = entry.path();
-        if !entry.file_type().is_file() || !is_audio(path) {
-            continue;
+    // Listing first is cheap and gives the total for progress reporting.
+    let files: Vec<_> = WalkDir::new(&root)
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|e| e.file_type().is_file() && is_audio(e.path()))
+        .collect();
+    let total = files.len();
+    progress(0, total);
+    for (done, entry) in files.iter().enumerate() {
+        if done % 25 == 0 {
+            progress(done, total);
         }
+        let path = entry.path();
         let uri = path.to_string_lossy().into_owned();
         let fingerprint = fs::metadata(path).ok().and_then(|metadata| {
             Some((
@@ -111,8 +156,8 @@ fn cached(root: &Path, db: &Path) -> Option<Vec<Track>> {
         };
         let track = tx
             .query_row(
-                "SELECT title, artist, album, track_no, duration, cover FROM tracks
-             WHERE path = ?1 AND mtime = ?2 AND size = ?3",
+                "SELECT title, artist, album, track_no, duration, cover, album_artist, year, disc_no,
+             genre FROM tracks_v3 WHERE path = ?1 AND mtime = ?2 AND size = ?3",
                 params![uri, mtime, size],
                 |row| {
                     Ok(Track {
@@ -123,6 +168,10 @@ fn cached(root: &Path, db: &Path) -> Option<Vec<Track>> {
                         track_no: row.get(3)?,
                         duration: row.get(4)?,
                         cover: row.get(5)?,
+                        album_artist: row.get(6)?,
+                        year: row.get(7)?,
+                        disc_no: row.get(8)?,
+                        genre: row.get(9)?,
                     })
                 },
             )
@@ -133,9 +182,10 @@ fn cached(root: &Path, db: &Path) -> Option<Vec<Track>> {
             None => {
                 let track = read_track(path);
                 tx.execute(
-                    "INSERT OR REPLACE INTO tracks
-                     (path, mtime, size, title, artist, album, track_no, duration, cover)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                    "INSERT OR REPLACE INTO tracks_v3
+                     (path, mtime, size, title, artist, album, track_no, duration, cover,
+                      album_artist, year, disc_no, genre)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
                     params![
                         uri,
                         mtime,
@@ -145,7 +195,11 @@ fn cached(root: &Path, db: &Path) -> Option<Vec<Track>> {
                         track.album,
                         track.track_no,
                         track.duration,
-                        track.cover
+                        track.cover,
+                        track.album_artist,
+                        track.year,
+                        track.disc_no,
+                        track.genre
                     ],
                 )
                 .ok()?;
@@ -155,7 +209,7 @@ fn cached(root: &Path, db: &Path) -> Option<Vec<Track>> {
         tracks.push(track);
     }
     let paths = {
-        let mut statement = tx.prepare("SELECT path FROM tracks").ok()?;
+        let mut statement = tx.prepare("SELECT path FROM tracks_v3").ok()?;
         statement
             .query_map([], |row| row.get::<_, String>(0))
             .ok()?
@@ -165,15 +219,13 @@ fn cached(root: &Path, db: &Path) -> Option<Vec<Track>> {
     for path in paths {
         let file = Path::new(&path);
         if file.starts_with(&root) && file.try_exists().ok() == Some(false) {
-            tx.execute("DELETE FROM tracks WHERE path = ?1", [&path])
+            tx.execute("DELETE FROM tracks_v3 WHERE path = ?1", [&path])
                 .ok()?;
         }
     }
     tx.commit().ok()?;
-    tracks.sort_by(|a, b| {
-        (&a.artist, &a.album, a.track_no, &a.title)
-            .cmp(&(&b.artist, &b.album, b.track_no, &b.title))
-    });
+    progress(total, total);
+    sort_tracks(&mut tracks);
     Some(tracks)
 }
 
@@ -213,6 +265,27 @@ fn strip_lrc(text: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// A 300 px JPEG of the track's cover, cached in `cache_dir` by album folder so a
+/// grid of albums never holds full-size embedded art (often several MB each).
+pub fn thumbnail(path: &Path, cache_dir: &Path) -> Option<Vec<u8>> {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    path.parent()?.hash(&mut h);
+    let cached = cache_dir.join(format!("{:016x}.jpg", h.finish()));
+    if let Ok(bytes) = fs::read(&cached) {
+        return Some(bytes);
+    }
+    let (_, original) = cover(path)?;
+    let img = image::load_from_memory(&original).ok()?.thumbnail(300, 300);
+    let mut out = std::io::Cursor::new(Vec::new());
+    img.into_rgb8()
+        .write_to(&mut out, image::ImageFormat::Jpeg)
+        .ok()?;
+    let bytes = out.into_inner();
+    let _ = fs::create_dir_all(cache_dir).and_then(|_| fs::write(&cached, &bytes));
+    Some(bytes)
 }
 
 /// Read embedded artwork, then try conventional cover filenames beside the file.
@@ -272,12 +345,12 @@ mod tests {
         assert_eq!(scan_cached(&root, &db), scan(&root));
         let conn = rusqlite::Connection::open(&db).unwrap();
         assert_eq!(
-            conn.query_row("SELECT count(*) FROM tracks", [], |row| row
+            conn.query_row("SELECT count(*) FROM tracks_v3", [], |row| row
                 .get::<_, i64>(0))
                 .unwrap(),
             1
         );
-        conn.execute("UPDATE tracks SET title = 'cached title'", [])
+        conn.execute("UPDATE tracks_v3 SET title = 'cached title'", [])
             .unwrap();
         assert_eq!(scan_cached(&root, &db)[0].title, "cached title");
         fs::write(&path, b"changed file with different size").unwrap();
@@ -285,7 +358,7 @@ mod tests {
         fs::remove_file(&path).unwrap();
         assert!(scan_cached(&root, &db).is_empty());
         assert_eq!(
-            conn.query_row("SELECT count(*) FROM tracks", [], |row| row
+            conn.query_row("SELECT count(*) FROM tracks_v3", [], |row| row
                 .get::<_, i64>(0))
                 .unwrap(),
             0
@@ -346,6 +419,7 @@ mod tests {
                 track_no: None,
                 duration: None,
                 cover: None,
+                ..Default::default()
             }]
         );
     }

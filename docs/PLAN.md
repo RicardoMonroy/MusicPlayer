@@ -8,7 +8,7 @@ Status: stack approved 2026-10-18. M0–M4 done, M5 in progress. License: GPL-3.
 |---|---|---|
 | Core | Rust workspace | One engine shared by GUI and TUI. |
 | Playback | libmpv (`libmpv2` crate) | Plays mp3/flac/ogg/opus/m4a/wav, gapless, ReplayGain, and YouTube streams through yt-dlp. Available on all three OS. |
-| Tags/library | `lofty` + SQLite cache (`rusqlite`, bundled) | Tags re-read only for new/changed files (mtime+size). Cache at `<cache>/musicplayer/library.sqlite`, safe to delete. |
+| Tags/library | `lofty` + SQLite cache (`rusqlite`, bundled; table `tracks_v3` with album artist, year, disc, genre) | Tags re-read only for new/changed files (mtime+size). Cache at `<cache>/musicplayer/library.sqlite`, safe to delete. |
 | Desktop UI | Tauri v2 + Svelte + TypeScript | Skins are HTML/CSS/Canvas: easy cassette, vinyl and Winamp looks. Small binaries. |
 | Tray / media keys | Tauri tray + popup window; `souvlaki` (MPRIS on Linux, SMTC on Windows, Now Playing on macOS) | Native controls everywhere. |
 | TUI | `ratatui` + `crossterm` | Same core, large mouse-clickable controls. |
@@ -30,6 +30,10 @@ Queue = mpv playlist (gapless, auto-advance for free). The UI polls player statu
 ## Equalizer
 
 `mp_core::eq`: Winamp's 10 bands (60 Hz–16 kHz) + preamp, ±12 dB, Winamp presets. One lavfi chain `@eq` placed before the visualizer; slider moves use `af-command` (no audio gap), falling back to a rebuild. Saved in `<config>/musicplayer/equalizer.json`, shared by GUI and TUI. Each skin draws its own EQ panel (`Skin.equalizer`). TUI: view 6 "Ecualizador" on the same API and config.
+
+## Local library
+
+Views: Álbumes (default; grouped by album artist + album; sort by artist/year/title/genre, genre filter), Artistas (artist page with discography), Carpetas (folder tree, play a folder recursively), Canciones (table sortable by every column, incl. genre). TUI: same sub-views (`v` cycles), artist view in columns, album view with disc separators, background scan with progress. Album page: disc separators, play / shuffle the whole album. Scans report progress (`scan-progress` event) so a first scan of a big library shows "Escaneando… n / total". Covers in grids are 300 px JPEG thumbnails cached in `<cache>/musicplayer/thumbs`.
 
 ## Shared settings
 

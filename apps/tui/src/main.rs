@@ -1,5 +1,6 @@
 mod app;
 mod equalizer;
+mod local;
 mod palette;
 mod ui;
 mod youtube;
@@ -25,6 +26,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // The TUI always shows the spectrum; without the needed ffmpeg filters it just stays flat.
     let _ = player.set_visualizer(true);
     let mut app = App::new(player, folder);
+    app.start_scan();
 
     let mut terminal = ratatui::init();
     execute!(std::io::stdout(), EnableMouseCapture)?;
@@ -150,6 +152,25 @@ fn on_key(app: &mut App, k: KeyEvent) {
     }
     let p = &app.player;
     match k.code {
+        KeyCode::Char('v') if app.is_local() => app.cycle_local(),
+        KeyCode::Char('o') if app.is_local() => {
+            app.local.order = app.local.order.next();
+            app.table.select((app.row_count() > 0).then_some(0));
+        }
+        KeyCode::Char('p')
+            if app.is_local()
+                && matches!(
+                    app.local.state.page,
+                    local::Page::Album(_) | local::Page::Folders(_)
+                ) =>
+        {
+            app.local_collection(false)
+        }
+        KeyCode::Char('s')
+            if app.is_local() && matches!(app.local.state.page, local::Page::Album(_)) =>
+        {
+            app.local_collection(true)
+        }
         KeyCode::Char('t') => app.cycle_palette(),
         KeyCode::Char('l') => app.toggle_lyrics(),
         KeyCode::Char('r') if matches!(app.tab, app::Tab::Youtube | app::Tab::Playlists) => {
@@ -179,13 +200,15 @@ fn on_key(app: &mut App, k: KeyEvent) {
         KeyCode::Char('+') | KeyCode::Char('=') => app.volume_by(5.0),
         KeyCode::Char('-') => app.volume_by(-5.0),
         KeyCode::Char('/') => {
-            app.set_tab(app::Tab::Youtube);
+            if !app.is_local() {
+                app.set_tab(app::Tab::Youtube);
+            }
             app.searching = true;
         }
         KeyCode::Esc | KeyCode::Backspace => app.back(),
         KeyCode::Char('f') if app.tab == app::Tab::Library => app.searching = true,
-        KeyCode::Tab if app.search_results() => app.focus_column(1),
-        KeyCode::BackTab if app.search_results() => app.focus_column(-1),
+        KeyCode::Tab if app.search_results() || app.local_artist() => app.focus_column(1),
+        KeyCode::BackTab if app.search_results() || app.local_artist() => app.focus_column(-1),
         KeyCode::Tab => app.cycle_tab(1),
         KeyCode::BackTab => app.cycle_tab(-1),
         KeyCode::Char(c @ '1'..='6') => app.set_tab(TABS[c as usize - '1' as usize]),
@@ -249,9 +272,9 @@ fn on_mouse(app: &mut App, m: MouseEvent) {
         .iter()
         .find(|(_, r)| hit(*r, x, y))
         .copied()
-        && column != app.yt_view.focus
+        && column != app.column_focus()
     {
-        app.focus_column(column as isize - app.yt_view.focus as isize);
+        app.focus_column(column as isize - app.column_focus() as isize);
     }
     match m.kind {
         MouseEventKind::ScrollUp => app.move_selection(-3),
@@ -277,8 +300,8 @@ fn on_mouse(app: &mut App, m: MouseEvent) {
                 .copied()
             {
                 app.searching = false;
-                if column != app.yt_view.focus {
-                    app.focus_column(column as isize - app.yt_view.focus as isize);
+                if column != app.column_focus() {
+                    app.focus_column(column as isize - app.column_focus() as isize);
                 }
                 if !hit(rect, x, y) {
                     return;
@@ -325,6 +348,63 @@ mod tests {
 
     fn key(app: &mut App, code: KeyCode) {
         on_key(app, KeyEvent::new(code, KeyModifiers::NONE));
+    }
+
+    #[test]
+    fn local_keys_filter_navigation_queue_and_folder_playback() {
+        let mut a = app(crate::local::tests::discography());
+        a.folder = PathBuf::from("/music");
+        a.yt_query = "consulta remota".into();
+        key(&mut a, KeyCode::Char('v'));
+        assert_eq!(a.local.state.page, local::Page::Artists);
+        key(&mut a, KeyCode::Char('/'));
+        for c in "opeth".chars() {
+            key(&mut a, KeyCode::Char(c));
+        }
+        key(&mut a, KeyCode::Enter);
+        assert_eq!(a.row_count(), 1);
+        assert_eq!(a.yt_query, "consulta remota");
+        key(&mut a, KeyCode::Enter);
+        assert!(a.local_artist());
+        assert_eq!(a.column_focus(), 1);
+        assert!(a.filter.is_empty());
+        key(&mut a, KeyCode::Down);
+        key(&mut a, KeyCode::Enter);
+        assert!(matches!(a.local.state.page, local::Page::Album(_)));
+        a.table.select(Some(2));
+        key(&mut a, KeyCode::Enter);
+        assert_eq!(a.queue.len(), 3);
+        assert_eq!(a.queue[0].title, "Inicio");
+        assert_eq!(a.player.status().index, Some(1));
+        key(&mut a, KeyCode::Char('p'));
+        assert_eq!(a.player.status().index, Some(0));
+        key(&mut a, KeyCode::Char('s'));
+        assert_eq!(a.queue.len(), 3);
+        let mut names: Vec<_> = a.queue.iter().map(|t| t.title.as_str()).collect();
+        names.sort();
+        assert_eq!(names, ["Inicio", "Primera", "Segunda"]);
+        key(&mut a, KeyCode::Esc);
+        assert_eq!(a.column_focus(), 1);
+        assert_eq!(a.table.selected(), Some(1));
+        key(&mut a, KeyCode::Tab);
+        assert_eq!(a.column_focus(), 0);
+        a.table.select(Some(2));
+        key(&mut a, KeyCode::Enter);
+        assert_eq!(a.queue.len(), 4);
+        assert_eq!(a.queue[0].title, "Temprana");
+        key(&mut a, KeyCode::Esc);
+        assert_eq!(a.filter, "opeth");
+        a.open_local(local::Page::Folders(String::new()));
+        key(&mut a, KeyCode::Enter);
+        assert_eq!(a.local.state.page, local::Page::Folders("Opeth".into()));
+        key(&mut a, KeyCode::Char('p'));
+        assert_eq!(a.queue.len(), 4);
+        key(&mut a, KeyCode::Backspace);
+        assert_eq!(a.local.state.page, local::Page::Folders(String::new()));
+        key(&mut a, KeyCode::Char('2'));
+        assert_eq!(a.local.state.page, local::Page::Albums);
+        key(&mut a, KeyCode::Char('o'));
+        assert_eq!(a.local.order, local::Order::Year);
     }
 
     #[test]
@@ -442,6 +522,7 @@ mod tests {
     #[test]
     fn search_focus_is_explicit_and_escape_keeps_query() {
         let mut a = app(Vec::new());
+        key(&mut a, KeyCode::Char('4'));
         key(&mut a, KeyCode::Char('/'));
         assert_eq!(a.tab, Tab::Youtube);
         key(&mut a, KeyCode::Char('z'));

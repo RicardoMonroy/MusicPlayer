@@ -313,6 +313,7 @@ fn track(t: TrackItem) -> Track {
         track_no: t.track_nr.map(u32::from),
         duration: t.duration.map(f64::from),
         cover: best_thumb(&t.cover),
+        ..Default::default()
     }
 }
 
@@ -358,6 +359,7 @@ fn ytdlp_tracks(json: &serde_json::Value) -> Option<Vec<Track>> {
                         .and_then(|t| t.last())
                         .and_then(|t| t["url"].as_str())
                         .map(String::from),
+                    ..Default::default()
                 })
             })
             .collect(),
@@ -474,6 +476,7 @@ mod tests {
             track_no: None,
             duration: None,
             cover: None,
+            ..Default::default()
         };
         let mut r = SearchResults {
             tracks: vec![t],
