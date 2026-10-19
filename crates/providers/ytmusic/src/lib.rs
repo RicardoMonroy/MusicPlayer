@@ -149,12 +149,14 @@ impl YtMusic {
             Kind::Album => {
                 let a = q.music_album(id).await?;
                 let cover = best_thumb(&a.cover);
+                let album_id = a.playlist_id.clone().unwrap_or_else(|| id.to_string());
                 Ok(a.tracks
                     .into_iter()
                     .map(|t| {
                         let mut t = track(t);
                         t.album.clone_from(&a.name);
                         t.cover = t.cover.or_else(|| cover.clone());
+                        t.album_id = Some(album_id.clone());
                         t
                     })
                     .collect())
@@ -188,6 +190,21 @@ impl YtMusic {
     ) -> Result<Vec<Track>, Error> {
         p.tracks.extend_limit(q, MAX_TRACKS).await?;
         Ok(p.tracks.items.into_iter().map(track).collect())
+    }
+
+    /// Shareable album link, as the OLAK5uy playlist that yt-dlp based
+    /// downloaders treat as an album.
+    pub async fn album_url(&self, album_id: &str) -> Result<String, Error> {
+        let id = if album_id.starts_with("OLAK5uy") {
+            album_id.to_string()
+        } else {
+            let a = self.rp.query().music_album(album_id).await?;
+            match a.playlist_id {
+                Some(p) => p,
+                None => return Ok(format!("https://music.youtube.com/browse/{album_id}")),
+            }
+        };
+        Ok(format!("https://music.youtube.com/playlist?list={id}"))
     }
 
     async fn playlist_via_ytdlp(&self, id: &str) -> Option<Vec<Track>> {
@@ -321,6 +338,7 @@ fn track(t: TrackItem) -> Track {
     Track {
         title: t.name,
         artist: names(&t.artists),
+        album_id: t.album.as_ref().map(|a| a.id.clone()),
         album: t.album.map(|a| a.name).unwrap_or_default(),
         uri: watch_url(&t.id),
         track_no: t.track_nr.map(u32::from),
@@ -566,6 +584,15 @@ mod tests {
             tracks
                 .iter()
                 .all(|t| t.cover.is_some() && !t.album.is_empty())
+        );
+        let album = tracks[0].album_id.as_deref().unwrap();
+        assert!(album.starts_with("OLAK5uy"), "{album}");
+        // Tracks from search carry the MPREb browse id; both resolve the same.
+        let browse = r.tracks[0].album_id.as_deref().unwrap();
+        let url = yt.album_url(browse).await.unwrap();
+        assert!(
+            url.starts_with("https://music.youtube.com/playlist?list=OLAK5uy"),
+            "{url}"
         );
         assert!(!yt.logged_in().await);
     }

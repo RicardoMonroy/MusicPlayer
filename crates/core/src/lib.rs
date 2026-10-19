@@ -23,6 +23,9 @@ pub struct Track {
     pub disc_no: Option<u32>,
     #[serde(default)]
     pub genre: Option<String>,
+    /// YouTube Music album: its OLAK5uy playlist id or MPREb browse id.
+    #[serde(default)]
+    pub album_id: Option<String>,
 }
 
 pub const APP_NAME: &str = "MusicPlayer";

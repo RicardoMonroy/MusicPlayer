@@ -6,6 +6,7 @@ export const SHORTCUTS: { group: string; keys: string; action: string }[] = [
   { group: "Reproducción", keys: "Ctrl + ↑ / ↓", action: "Subir / bajar volumen" },
   { group: "Letra", keys: "L", action: "Mostrar / ocultar la letra" },
   { group: "Letra", keys: "T", action: "Traducir la letra al español" },
+  { group: "Ventanas", keys: "Q", action: "Cola de reproducción" },
   { group: "Ventanas", keys: "M", action: "Mini reproductor" },
   { group: "Ventanas", keys: "E", action: "Ecualizador" },
   { group: "Ventanas", keys: "Ctrl + ,", action: "Ajustes" },

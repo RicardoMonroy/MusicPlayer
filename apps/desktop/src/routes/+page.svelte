@@ -14,14 +14,16 @@
   } from "$lib/player.svelte";
   import Local from "$lib/views/Local.svelte";
   import YouTube from "$lib/views/YouTube.svelte";
+  import Queue from "$lib/views/Queue.svelte";
   import { listen } from "@tauri-apps/api/event";
   import { savedSkin, skinById, applyTheme, DEFAULT_SKIN, HERO_SIZE } from "$lib/skins";
   import Settings, { type Section } from "$lib/Settings.svelte";
   import { typing } from "$lib/shortcuts";
 
-  type View = "local" | "youtube";
+  type View = "local" | "youtube" | "queue";
   const VIEW_KEY = "view";
   let view = $state<View>((localStorage.getItem(VIEW_KEY) as View) ?? "local");
+  let beforeQueue: View = "local";
   let dragPos = $state<number | null>(null);
 
   const track = $derived(player.track);
@@ -166,6 +168,11 @@
       case "E":
         openSettings("eq");
         break;
+      case "q":
+      case "Q":
+        if (view !== "queue") beforeQueue = view;
+        view = view === "queue" ? beforeQueue : "queue";
+        break;
       case "m":
       case "M":
         showView("compact");
@@ -198,6 +205,10 @@
       <svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20m0 18a8 8 0 1 1 0-16 8 8 0 0 1 0 16m-2-12.5v9l6-4.5z" /></svg>
       <span class="label">YouTube Music</span>
     </button>
+    <button title="Cola de reproducción" class:on={view === "queue"} onclick={() => (view = "queue")}>
+      <svg viewBox="0 0 24 24"><path d="M3 6h12v2H3zm0 5h12v2H3zm0 5h8v2H3zm14-5v6.3a3 3 0 1 0 2 2.7V13h3v-2z" /></svg>
+      <span class="label">Cola</span>
+    </button>
     <button title="Ajustes" class="gear" onclick={() => openSettings("apariencia")}>
       <svg viewBox="0 0 24 24"><path d="M19.4 13a7.5 7.5 0 0 0 0-2l2.1-1.6-2-3.5-2.5 1a7.6 7.6 0 0 0-1.7-1L15 3h-4l-.4 2.9a7.6 7.6 0 0 0-1.7 1l-2.5-1-2 3.5L6.6 11a7.5 7.5 0 0 0 0 2l-2.1 1.6 2 3.5 2.5-1c.5.4 1.1.7 1.7 1L11 21h4l.4-2.9c.6-.3 1.2-.6 1.7-1l2.5 1 2-3.5zM13 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7" /></svg>
       <span class="label">Ajustes</span>
@@ -210,8 +221,10 @@
 
   {#if view === "local"}
     <Local />
-  {:else}
+  {:else if view === "youtube"}
     <YouTube />
+  {:else}
+    <Queue />
   {/if}
 
   <aside class="now">

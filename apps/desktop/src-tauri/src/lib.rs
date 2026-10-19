@@ -250,6 +250,20 @@ async fn yt_open(kind: Kind, id: String, yt: State<'_, YtMusic>) -> CmdResult<Ve
     yt.open(&kind, &id).await.map_err(err)
 }
 
+/// Copy a YouTube Music album's link (for downloaders) and return it. Copied
+/// here, not in JS: WebKitGTK rejects clipboard writes after an await.
+#[tauri::command]
+async fn copy_album_url(
+    album_id: String,
+    app: tauri::AppHandle,
+    yt: State<'_, YtMusic>,
+) -> CmdResult<String> {
+    use tauri_plugin_clipboard_manager::ClipboardExt;
+    let url = yt.album_url(&album_id).await.map_err(err)?;
+    app.clipboard().write_text(url.clone()).map_err(err)?;
+    Ok(url)
+}
+
 /// YouTube Music's Home feed (personalized when logged in).
 #[tauri::command]
 async fn yt_home(yt: State<'_, YtMusic>) -> CmdResult<Vec<Shelf>> {
@@ -296,8 +310,14 @@ async fn yt_liked(yt: State<'_, YtMusic>) -> CmdResult<Vec<Track>> {
 pub fn run() {
     let player = Player::new().expect("libmpv failed to start; is mpv installed?");
     tauri::Builder::default()
+        // Launching again (menu, terminal) brings back the window hidden in
+        // the tray instead of starting a second player.
+        .plugin(tauri_plugin_single_instance::init(|app, _, _| {
+            tray::show(app, "main")
+        }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .manage(player)
         .manage(Queue::default())
         .setup(|app| {
@@ -349,6 +369,7 @@ pub fn run() {
             translate_lyrics,
             yt_search,
             yt_open,
+            copy_album_url,
             yt_artist,
             yt_home,
             yt_logged_in,

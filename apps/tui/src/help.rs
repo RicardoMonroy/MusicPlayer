@@ -37,6 +37,11 @@ pub const HELP: &[(&str, &str, &str)] = &[
     ("Reproducción", "Espacio", "Pausar / continuar"),
     (
         "Reproducción",
+        "y",
+        "Copiar URL del álbum de YouTube Music (fila de la cola o canción actual)",
+    ),
+    (
+        "Reproducción",
         "n / p",
         "Siguiente / anterior; p tiene prioridad de colección local o remota abierta y de preajuste en ecualizador",
     ),

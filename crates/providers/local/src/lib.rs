@@ -91,6 +91,7 @@ fn read_track(path: &Path) -> Track {
         year: tag.and_then(|tag| tag.date()).map(|d| u32::from(d.year)),
         disc_no: tag.and_then(|tag| tag.disk()),
         genre: tag.and_then(|tag| tag.genre()).map(|g| g.into_owned()),
+        album_id: None,
     }
 }
 
@@ -172,6 +173,7 @@ fn cached(root: &Path, db: &Path, progress: &mut dyn FnMut(usize, usize)) -> Opt
                         year: row.get(7)?,
                         disc_no: row.get(8)?,
                         genre: row.get(9)?,
+                        album_id: None,
                     })
                 },
             )

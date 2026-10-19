@@ -229,6 +229,7 @@ fn on_key(app: &mut App, k: KeyEvent) {
         }
         KeyCode::Char('t') => app.cycle_palette(),
         KeyCode::Char('l') => app.toggle_lyrics(),
+        KeyCode::Char('y') => app.copy_album_url(),
         KeyCode::Char('r')
             if matches!(
                 app.tab,

@@ -932,6 +932,9 @@ fn help_groups(app: &App) -> Vec<(&'static str, &'static str)> {
     if app.search_results() || app.local_results() {
         groups.insert(1, ("Tab/⇧Tab", "columna"));
     }
+    if app.tab == Tab::Queue || app.now_playing().is_some_and(|t| t.album_id.is_some()) {
+        groups.insert(1, ("y", "copiar URL álbum"));
+    }
     if app.is_local() {
         groups.insert(0, ("1-0", "vista"));
         groups.insert(1, ("/", "buscar local"));

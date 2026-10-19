@@ -89,6 +89,8 @@ pub enum NetworkAction {
 }
 
 /// A finished network request, applied on the UI thread by `tick`.
+// One per request, moved once; boxing would buy nothing.
+#[allow(clippy::large_enum_variant)]
 pub enum NetworkResult {
     Account(Result<std::sync::Arc<YtMusic>, String>, bool),
     Home(Result<Vec<mp_ytmusic::Shelf>, String>),
@@ -97,6 +99,7 @@ pub enum NetworkResult {
     Library(bool, Result<Option<mp_ytmusic::Library>, String>),
     /// Tab that asked, title, previous selection, tracks.
     Open(Tab, String, usize, Result<Vec<Track>, String>),
+    AlbumUrl(Result<String, String>),
 }
 
 pub struct App {
@@ -913,12 +916,50 @@ impl App {
         });
     }
 
+    /// Copy the YouTube Music album link of the selected queue row (or the
+    /// playing track elsewhere), for downloaders.
+    pub fn copy_album_url(&mut self) {
+        let track = if self.tab == Tab::Queue {
+            self.table.selected().and_then(|i| self.queue.get(i))
+        } else {
+            self.now_playing()
+        };
+        let Some(id) = track.and_then(|t| t.album_id.clone()) else {
+            self.notice = Some((
+                "Solo los álbumes de YouTube Music tienen URL.".into(),
+                Instant::now(),
+            ));
+            return;
+        };
+        let (Ok(runtime), Ok(yt)) = (&self.runtime, &self.youtube) else {
+            return;
+        };
+        let (yt, tx) = (yt.clone(), self.net.0.clone());
+        self.requests += 1;
+        self.notice = Some(("Obteniendo URL del álbum…".into(), Instant::now()));
+        runtime.spawn(async move {
+            let url = yt.album_url(&id).await.map_err(|e| e.to_string());
+            let _ = tx.send(NetworkResult::AlbumUrl(url));
+        });
+    }
+
     fn apply_network(&mut self, result: NetworkResult) {
         self.requests = self.requests.saturating_sub(1);
         if self.pending.is_none() {
             self.message = None;
         }
         let (tab, result) = match result {
+            NetworkResult::AlbumUrl(r) => {
+                let text = match r {
+                    Ok(url) => {
+                        copy_to_clipboard(&url);
+                        format!("URL del álbum copiada: {url}")
+                    }
+                    Err(e) => format!("No se pudo obtener la URL del álbum: {e}"),
+                };
+                self.notice = Some((text, Instant::now()));
+                return;
+            }
             NetworkResult::Account(yt, logged_in) => {
                 self.youtube = yt;
                 self.logged_in = logged_in;
@@ -1061,9 +1102,43 @@ pub fn fmt_time(s: f64) -> String {
     format!("{}:{:02}", s / 60, s % 60)
 }
 
+/// Copy through the terminal (OSC 52): works over SSH and on any OS, no
+/// clipboard daemon needed.
+fn copy_to_clipboard(text: &str) {
+    use std::io::Write;
+    let mut out = std::io::stdout();
+    let _ = write!(out, "\x1b]52;c;{}\x07", base64(text.as_bytes()));
+    let _ = out.flush();
+}
+
+fn base64(bytes: &[u8]) -> String {
+    const ABC: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let n = chunk.iter().fold(0u32, |n, &b| n << 8 | u32::from(b)) << (8 * (3 - chunk.len()));
+        for i in 0..4 {
+            out.push(if i <= chunk.len() {
+                ABC[(n >> (18 - 6 * i) & 63) as usize] as char
+            } else {
+                '='
+            });
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 pub mod tests {
     use super::*;
+
+    #[test]
+    fn base64_pads_like_the_standard() {
+        assert_eq!(base64(b""), "");
+        assert_eq!(base64(b"f"), "Zg==");
+        assert_eq!(base64(b"fo"), "Zm8=");
+        assert_eq!(base64(b"foo"), "Zm9v");
+        assert_eq!(base64(b"foobar"), "Zm9vYmFy");
+    }
 
     pub fn track(title: &str, artist: &str, album: &str) -> Track {
         Track {

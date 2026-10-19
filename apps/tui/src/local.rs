@@ -112,6 +112,8 @@ pub enum Page {
     Artist(String),
     Album(usize),
 }
+// Rows are rebuilt per screen and mostly tracks; boxing them buys nothing.
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone)]
 pub enum Row {
     Track(Track),

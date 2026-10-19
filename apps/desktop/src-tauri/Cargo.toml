@@ -30,4 +30,6 @@ mp-ytmusic = { version = "0.1.0", path = "../../../crates/providers/ytmusic" }
 reqwest = "0.12"
 dirs = "6"
 url = "2"
+tauri-plugin-clipboard-manager = "2"
+tauri-plugin-single-instance = "2"
 
