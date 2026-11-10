@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 150 150">
+  <!-- Source of every app icon: `rsvg-convert -w 1024 icon.svg -o /tmp/icon.png && bun run tauri icon /tmp/icon.png -o src-tauri/icons` (drop the android/ios output). -->
+  <rect width="150" height="150" rx="34" fill="#2b2250"/>
+  <circle cx="75" cy="75" r="52" fill="#111018"/>
+  <circle cx="75" cy="75" r="44" fill="none" stroke="#2c2a3a" stroke-width="1.5"/>
+  <circle cx="75" cy="75" r="36" fill="none" stroke="#2c2a3a" stroke-width="1.5"/>
+  <circle cx="75" cy="75" r="28" fill="none" stroke="#2c2a3a" stroke-width="1.5"/>
+  <circle cx="75" cy="75" r="20" fill="#9d8cf2"/>
+  <path d="M69 64 L86 75 L69 86 Z" fill="#111018"/>
+</svg>

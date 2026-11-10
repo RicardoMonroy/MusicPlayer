@@ -20,18 +20,33 @@ build() {
 
 package() {
   cd "$srcdir/MusicPlayer"
-  install -Dm755 target/release/musicplayer-desktop "$pkgdir/usr/bin/musicplayer"
+  # Keep the binary name: it is the window class the Hyprland mini player rule matches.
+  install -Dm755 target/release/musicplayer-desktop "$pkgdir/usr/bin/musicplayer-desktop"
+  ln -s musicplayer-desktop "$pkgdir/usr/bin/musicplayer"
   install -Dm755 target/release/musicplayer-tui "$pkgdir/usr/bin/musicplayer-tui"
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
   install -Dm644 /dev/stdin "$pkgdir/usr/share/applications/musicplayer.desktop" <<'DESKTOP'
 [Desktop Entry]
 Type=Application
 Name=MusicPlayer
-Comment=Play local music and YouTube Music
-Exec=musicplayer
+GenericName=Reproductor de música
+Comment=Música local y YouTube Music
+Exec=musicplayer-desktop
 Icon=musicplayer
 Terminal=false
 Categories=AudioVideo;Audio;Player;
+StartupWMClass=musicplayer-desktop
+DESKTOP
+  install -Dm644 /dev/stdin "$pkgdir/usr/share/applications/musicplayer-tui.desktop" <<'DESKTOP'
+[Desktop Entry]
+Type=Application
+Name=MusicPlayer TUI
+GenericName=Reproductor de música (terminal)
+Comment=Música local y YouTube Music en la terminal
+Exec=musicplayer-tui
+Icon=musicplayer
+Terminal=true
+Categories=AudioVideo;Audio;Player;ConsoleOnly;
 DESKTOP
   local size
   for size in 32 128; do
@@ -40,4 +55,6 @@ DESKTOP
   done
   install -Dm644 apps/desktop/src-tauri/icons/128x128@2x.png \
     "$pkgdir/usr/share/icons/hicolor/256x256/apps/musicplayer.png"
+  install -Dm644 apps/desktop/src-tauri/icons/icon.svg \
+    "$pkgdir/usr/share/icons/hicolor/scalable/apps/musicplayer.svg"
 }
