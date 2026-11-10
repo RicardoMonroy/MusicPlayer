@@ -943,6 +943,51 @@ impl App {
         });
     }
 
+    /// Track the page shortcuts act on: the selected queue or YouTube row,
+    /// else the one playing.
+    fn focused_track(&self) -> Option<&Track> {
+        let sel = self.table.selected();
+        let row = match self.tab {
+            Tab::Queue => sel.and_then(|i| self.queue.get(i)),
+            Tab::Home | Tab::Youtube | Tab::Playlists if !self.search_results() => {
+                match sel.and_then(|i| self.remote_view().rows.get(i)) {
+                    Some(YoutubeRow::Track(t)) => Some(t),
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
+        row.or_else(|| self.now_playing())
+    }
+
+    /// Open the YouTube Music page of the focused track's artist or album,
+    /// on the YouTube tab (Esc goes back), like clicking the name in YT Music.
+    pub fn open_track_page(&mut self, kind: mp_ytmusic::Kind) {
+        let page = self.focused_track().and_then(|t| match kind {
+            mp_ytmusic::Kind::Artist => Some((t.artist_id.clone()?, t.artist.clone())),
+            _ => Some((t.album_id.clone()?, t.album.clone())),
+        });
+        let Some((id, title)) = page else {
+            self.notice = Some((
+                "Solo las canciones de YouTube Music tienen página de artista o álbum.".into(),
+                Instant::now(),
+            ));
+            return;
+        };
+        self.set_tab(Tab::Youtube);
+        let row = YoutubeRow::Collection(mp_ytmusic::Collection {
+            kind,
+            id,
+            title,
+            subtitle: String::new(),
+            cover: None,
+        });
+        self.schedule(
+            NetworkAction::Open(row, self.table.selected().unwrap_or(0)),
+            "Abriendo…",
+        );
+    }
+
     fn apply_network(&mut self, result: NetworkResult) {
         self.requests = self.requests.saturating_sub(1);
         if self.pending.is_none() {

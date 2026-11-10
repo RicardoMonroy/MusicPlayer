@@ -2,6 +2,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import { player, jump, fmtTime, type Track } from "$lib/player.svelte";
   import Cover from "$lib/local/Cover.svelte";
+  import { openArtist, openAlbum } from "$lib/nav.svelte";
 
   type Group = { album: string; artist: string; first: Track; start: number; tracks: Track[] };
 
@@ -55,8 +56,8 @@
               {#if g.first.cover}<img src={g.first.cover} alt="" />{:else}<Cover uri={g.first.uri} title={g.album} />{/if}
             </div>
             <div class="meta">
-              <strong>{g.album || "Sin álbum"}</strong>
-              <span>{g.artist}{g.first.year ? ` · ${g.first.year}` : ""} · {g.tracks.length} {g.tracks.length === 1 ? "canción" : "canciones"}</span>
+              <strong><button class="nav-link" disabled={!g.first.album_id} onclick={() => openAlbum(g.first)}>{g.album || "Sin álbum"}</button></strong>
+              <span><button class="nav-link" disabled={!g.first.artist_id} onclick={() => openArtist(g.first)}>{g.artist}</button>{g.first.year ? ` · ${g.first.year}` : ""} · {g.tracks.length} {g.tracks.length === 1 ? "canción" : "canciones"}</span>
             </div>
             {#if g.first.album_id}
               {@const id = g.first.album_id}

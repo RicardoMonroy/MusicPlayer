@@ -149,6 +149,35 @@ fn text(v: &Value) -> String {
         .unwrap_or_default()
 }
 
+/// First run in `texts` linking to a browse id with `prefix` ("UC" artist,
+/// "MPRE" album): (id, its text).
+fn linked<'a>(
+    texts: impl IntoIterator<Item = &'a Value>,
+    prefix: &str,
+) -> Option<(String, String)> {
+    texts.into_iter().find_map(|t| {
+        t["runs"].as_array()?.iter().find_map(|run| {
+            let id = run["navigationEndpoint"]["browseEndpoint"]["browseId"].as_str()?;
+            id.starts_with(prefix).then(|| {
+                (
+                    id.to_string(),
+                    run["text"].as_str().unwrap_or_default().to_string(),
+                )
+            })
+        })
+    })
+}
+
+/// Fill a track's artist/album ids (and album name) from its linked runs.
+fn with_links<'a>(mut t: Track, texts: impl IntoIterator<Item = &'a Value> + Clone) -> Track {
+    t.artist_id = linked(texts.clone(), "UC").map(|(id, _)| id);
+    if let Some((id, name)) = linked(texts, "MPRE") {
+        t.album_id = Some(id);
+        t.album = name;
+    }
+    t
+}
+
 fn thumb(v: &Value) -> Option<String> {
     let thumbs = v["musicThumbnailRenderer"]["thumbnail"]["thumbnails"].as_array()?;
     crate::pick_thumb(
@@ -183,13 +212,14 @@ fn item(v: &Value) -> Option<HomeItem> {
         let cover = thumb(&r["thumbnailRenderer"]);
         let nav = &r["navigationEndpoint"];
         if let Some(id) = nav["watchEndpoint"]["videoId"].as_str() {
-            return Some(HomeItem::Track(Track {
+            let t = Track {
                 title,
                 artist: strip_kind(&subtitle),
                 uri: watch_url(id),
                 cover,
                 ..Default::default()
-            }));
+            };
+            return Some(HomeItem::Track(with_links(t, [&r["subtitle"]])));
         }
         let id = nav["browseEndpoint"]["browseId"].as_str()?;
         let (kind, id) = if id.starts_with("MPRE") {
@@ -215,7 +245,7 @@ fn item(v: &Value) -> Option<HomeItem> {
     let id = r["playlistItemData"]["videoId"]
         .as_str()
         .or(column(0)["runs"][0]["navigationEndpoint"]["watchEndpoint"]["videoId"].as_str())?;
-    Some(HomeItem::Track(Track {
+    let t = Track {
         title: text(column(0)),
         artist: column(1)["runs"][0]["text"]
             .as_str()
@@ -224,7 +254,8 @@ fn item(v: &Value) -> Option<HomeItem> {
         uri: watch_url(id),
         cover: thumb(&r["thumbnail"]),
         ..Default::default()
-    }))
+    };
+    Some(HomeItem::Track(with_links(t, [column(1), column(2)])))
 }
 
 /// "Canción • Opeth" → "Opeth", "Álbum • Moonspell" → "Moonspell": the icon
@@ -272,7 +303,10 @@ mod tests {
                         "playlistItemData": { "videoId": "v2" },
                         "flexColumns": [
                             { "musicResponsiveListItemFlexColumnRenderer": { "text": { "runs": [{ "text": "Harvest" }] } } },
-                            { "musicResponsiveListItemFlexColumnRenderer": { "text": { "runs": [{ "text": "Opeth" }, { "text": " • x" }] } } }
+                            { "musicResponsiveListItemFlexColumnRenderer": { "text": { "runs": [
+                                { "text": "Opeth", "navigationEndpoint": { "browseEndpoint": { "browseId": "UCopeth" } } }, { "text": " • x" }] } } },
+                            { "musicResponsiveListItemFlexColumnRenderer": { "text": { "runs": [
+                                { "text": "Heritage", "navigationEndpoint": { "browseEndpoint": { "browseId": "MPREb_her" } } }] } } }
                         ] } }
                 ] } },
             { "musicCarouselShelfRenderer": { "header": {}, "contents": [] } }
@@ -282,7 +316,7 @@ mod tests {
         let items = &shelves[0].items;
         assert_eq!(items.len(), 5, "unknown browse ids are skipped");
         assert!(
-            matches!(&items[0], HomeItem::Track(t) if t.artist == "Opeth" && t.uri == watch_url("v1") && t.cover.as_deref() == Some("big"))
+            matches!(&items[0], HomeItem::Track(t) if t.artist == "Opeth" && t.uri == watch_url("v1") && t.cover.as_deref() == Some("big") && t.artist_id.is_none())
         );
         assert!(
             matches!(&items[1], HomeItem::Collection(c) if c.kind == Kind::Album && c.id == "MPREb_x")
@@ -292,7 +326,9 @@ mod tests {
         );
         assert!(matches!(&items[3], HomeItem::Collection(c) if c.kind == Kind::Artist));
         assert!(
-            matches!(&items[4], HomeItem::Track(t) if t.title == "Harvest" && t.artist == "Opeth")
+            matches!(&items[4], HomeItem::Track(t) if t.title == "Harvest" && t.artist == "Opeth"
+                && t.artist_id.as_deref() == Some("UCopeth")
+                && t.album_id.as_deref() == Some("MPREb_her") && t.album == "Heritage")
         );
     }
 

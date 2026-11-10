@@ -13,8 +13,10 @@ export type Track = {
   year?: number | null;
   disc_no?: number | null;
   genre?: string | null;
-  /** YouTube Music album (OLAK5uy or MPREb id); null for local files. */
+  /** YouTube Music album browse id (MPREb…); null for local files. */
   album_id?: string | null;
+  /** YouTube Music channel id of the first artist. */
+  artist_id?: string | null;
 };
 
 export type Status = {

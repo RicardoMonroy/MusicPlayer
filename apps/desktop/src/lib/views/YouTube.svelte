@@ -1,27 +1,37 @@
 <script lang="ts" module>
-  import type { Shelf } from "$lib/yt";
+  import type { Shelf, SearchResults, ArtistPage } from "$lib/yt";
+  import type { Track } from "$lib/player.svelte";
   // Home is slow-ish (~2 s) and changes little: keep it for the session.
   let homeCache: Shelf[] | null = null;
+
+  /** An opened album/playlist (or "Me gusta"), or an artist page. */
+  type Page =
+    | { type: "list"; title: string; subtitle: string; tracks: Track[]; albumId?: string }
+    | { type: "artist"; page: ArtistPage };
+  // Module level, so leaving the view (Biblioteca, Cola) and coming back keeps
+  // the search and the pages opened on top of it, like YouTube Music.
+  let query = $state("");
+  let results = $state<SearchResults | null>(null);
+  let stack = $state<Page[]>([]);
 </script>
 
 <script lang="ts">
   import { open as pickFile } from "@tauri-apps/plugin-dialog";
-  import { play, type Track } from "$lib/player.svelte";
+  import { invoke } from "@tauri-apps/api/core";
+  import { play } from "$lib/player.svelte";
   import TrackList from "$lib/TrackList.svelte";
   import Cards from "$lib/Cards.svelte";
   import HomeShelf from "$lib/HomeShelf.svelte";
   import * as yt from "$lib/yt";
+  import { tick, untrack } from "svelte";
+  import { nav, openArtist } from "$lib/nav.svelte";
 
-  let query = $state("");
   let busy = $state(false);
   let error = $state("");
   let account = $state(false);
-  let results = $state<yt.SearchResults | null>(null);
   let lib = $state<yt.Library | null>(null);
-  /** An opened album/playlist (or "Me gusta"), shown over the results. */
-  let opened = $state<{ title: string; subtitle: string; tracks: Track[] } | null>(null);
-  /** An opened artist page; an album opened from it stacks on top (`opened`). */
-  let artistPage = $state<yt.ArtistPage | null>(null);
+  const top = $derived(stack.at(-1));
+  let scroller: HTMLElement | undefined = $state();
   let allSongs = $state(false);
   let tab = $state<"inicio" | "biblioteca">("inicio");
   let shelves = $state<Shelf[] | null>(homeCache);
@@ -62,25 +72,46 @@
   async function doSearch(e: SubmitEvent) {
     e.preventDefault();
     if (!query.trim()) return;
-    opened = null;
-    artistPage = null;
+    stack = [];
     allSongs = false;
     results = (await run(() => yt.search(query.trim()))) ?? null;
   }
 
+  async function push(page: Page) {
+    stack = [...stack, page];
+    await tick();
+    scroller?.scrollTo({ top: 0 });
+  }
+  const back = () => (stack = stack.slice(0, -1));
+
   async function openCard(c: yt.Collection) {
     if (c.kind === "artist") {
-      opened = null;
-      artistPage = (await run(() => yt.artist(c.id))) ?? artistPage;
+      const page = await run(() => yt.artist(c.id));
+      if (page) push({ type: "artist", page });
       return;
     }
     const tracks = await run(() => yt.openCollection(c));
-    if (tracks) opened = { title: c.title, subtitle: c.subtitle, tracks };
+    if (tracks) push({ type: "list", title: c.title, subtitle: c.subtitle, tracks, albumId: c.kind === "album" ? c.id : undefined });
   }
+
+  // Artist/album links elsewhere in the app (now playing, queue, track lists).
+  $effect(() => {
+    const t = nav.yt;
+    if (!t) return;
+    nav.yt = null;
+    untrack(() => openCard({ kind: t.kind, id: t.id, title: t.title, subtitle: "", cover: null }));
+  });
 
   async function openLiked() {
     const tracks = await run(yt.liked);
-    if (tracks) opened = { title: "Me gusta", subtitle: "Tus canciones favoritas", tracks };
+    if (tracks) push({ type: "list", title: "Me gusta", subtitle: "Tus canciones favoritas", tracks });
+  }
+
+  let copied = $state(false);
+  async function copyAlbumUrl(albumId: string) {
+    if (await run(() => invoke("copy_album_url", { albumId })) === undefined) return;
+    copied = true;
+    setTimeout(() => (copied = false), 2000);
   }
 
   async function loadLibrary() {
@@ -121,21 +152,35 @@
 
   {#if error}<p class="error">{error}</p>{/if}
 
-  <div class="scroll">
-    {#if opened}
+  <div class="scroll" bind:this={scroller}>
+    {#if top?.type === "list"}
+      {@const o = top}
+      {@const first = o.tracks[0]}
       <div class="opened">
-        <button class="pill ghost" onclick={() => (opened = null)}>← Volver</button>
+        <button class="pill ghost" onclick={back}>← Volver</button>
+        {#if o.albumId && first?.cover}<img class="album-art" src={first.cover} alt="" />{/if}
         <div>
-          <h2>{opened.title}</h2>
-          <p>{opened.subtitle} · {opened.tracks.length} canciones</p>
+          <h2>{o.title}</h2>
+          <p>
+            {#if o.albumId && first}
+              <button class="nav-link" disabled={!first.artist_id} onclick={() => openArtist(first)}>{first.artist}</button>
+            {:else}
+              {o.subtitle}
+            {/if}
+            · {o.tracks.length} canciones
+          </p>
         </div>
-        <button class="pill" onclick={() => opened && play(opened.tracks, 0)}>▶ Reproducir</button>
+        <button class="pill" onclick={() => play(o.tracks, 0)}>▶ Reproducir</button>
+        {#if o.albumId}
+          {@const id = o.albumId}
+          <button class="pill ghost" onclick={() => copyAlbumUrl(id)}>{copied ? "¡Copiada!" : "Copiar URL"}</button>
+        {/if}
       </div>
-      <TrackList tracks={opened.tracks} onplay={(i) => opened && play(opened.tracks, i)} />
-    {:else if artistPage}
-      {@const a = artistPage}
+      <TrackList tracks={o.tracks} onplay={(i) => play(o.tracks, i)} />
+    {:else if top?.type === "artist"}
+      {@const a = top.page}
       <div class="artist-head" style:--cover={a.cover ? `url(${a.cover})` : "none"}>
-        <button class="pill ghost" onclick={() => (artistPage = null)}>← Volver</button>
+        <button class="pill ghost" onclick={back}>← Volver</button>
         <div class="avatar">{#if a.cover}<img src={a.cover} alt="" />{/if}</div>
         <div class="who">
           <h2>{a.name}</h2>
@@ -397,6 +442,7 @@
   }
   .opened {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 16px;
     margin-bottom: 12px;
@@ -404,6 +450,13 @@
   .opened div {
     flex: 1;
     min-width: 0;
+  }
+  .album-art {
+    width: 96px;
+    height: 96px;
+    object-fit: cover;
+    border-radius: var(--radius);
+    box-shadow: var(--raised);
   }
   .opened h2 {
     margin: 0;

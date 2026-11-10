@@ -15,14 +15,12 @@
   import Local from "$lib/views/Local.svelte";
   import YouTube from "$lib/views/YouTube.svelte";
   import Queue from "$lib/views/Queue.svelte";
+  import { nav, openArtist, openAlbum, type View } from "$lib/nav.svelte";
   import { listen } from "@tauri-apps/api/event";
   import { savedSkin, skinById, applyTheme, DEFAULT_SKIN, HERO_SIZE } from "$lib/skins";
   import Settings, { type Section } from "$lib/Settings.svelte";
   import { typing } from "$lib/shortcuts";
 
-  type View = "local" | "youtube" | "queue";
-  const VIEW_KEY = "view";
-  let view = $state<View>((localStorage.getItem(VIEW_KEY) as View) ?? "local");
   let beforeQueue: View = "local";
   let dragPos = $state<number | null>(null);
 
@@ -114,7 +112,7 @@
       off.then((f) => f());
     };
   });
-  $effect(() => localStorage.setItem(VIEW_KEY, view));
+  $effect(() => localStorage.setItem("view", nav.view));
 
   // Shortcuts are documented in $lib/shortcuts.ts (shown in Ajustes › Atajos).
   function onKey(e: KeyboardEvent) {
@@ -170,8 +168,8 @@
         break;
       case "q":
       case "Q":
-        if (view !== "queue") beforeQueue = view;
-        view = view === "queue" ? beforeQueue : "queue";
+        if (nav.view !== "queue") beforeQueue = nav.view;
+        nav.view = nav.view === "queue" ? beforeQueue : "queue";
         break;
       case "m":
       case "M":
@@ -197,15 +195,15 @@
         <svg viewBox="0 0 24 24"><path d={sideCollapsed ? "M9 6l6 6-6 6" : "M15 6l-6 6 6 6"} /></svg>
       </button>
     </div>
-    <button title="Biblioteca" class:on={view === "local"} onclick={() => (view = "local")}>
+    <button title="Biblioteca" class:on={nav.view === "local"} onclick={() => (nav.view = "local")}>
       <svg viewBox="0 0 24 24"><path d="M4 6h2v14H4zm4-2h2v16H8zm4 2h2v14h-2zm4.5-1.5 1.9-.6 4.2 14.3-1.9.6z" /></svg>
       <span class="label">Biblioteca</span>
     </button>
-    <button title="YouTube Music" class:on={view === "youtube"} onclick={() => (view = "youtube")}>
+    <button title="YouTube Music" class:on={nav.view === "youtube"} onclick={() => (nav.view = "youtube")}>
       <svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20m0 18a8 8 0 1 1 0-16 8 8 0 0 1 0 16m-2-12.5v9l6-4.5z" /></svg>
       <span class="label">YouTube Music</span>
     </button>
-    <button title="Cola de reproducción" class:on={view === "queue"} onclick={() => (view = "queue")}>
+    <button title="Cola de reproducción" class:on={nav.view === "queue"} onclick={() => (nav.view = "queue")}>
       <svg viewBox="0 0 24 24"><path d="M3 6h12v2H3zm0 5h12v2H3zm0 5h8v2H3zm14-5v6.3a3 3 0 1 0 2 2.7V13h3v-2z" /></svg>
       <span class="label">Cola</span>
     </button>
@@ -219,9 +217,9 @@
     </button>
   </nav>
 
-  {#if view === "local"}
+  {#if nav.view === "local"}
     <Local />
-  {:else if view === "youtube"}
+  {:else if nav.view === "youtube"}
     <YouTube />
   {:else}
     <Queue />
@@ -289,7 +287,15 @@
       </div>
     {/if}
     <h2>{track?.title ?? "Nada en reproducción"}</h2>
-    <p>{track ? `${track.artist} · ${track.album}` : "Haz doble clic en una canción"}</p>
+    <p>
+      {#if track}
+        <button class="nav-link" disabled={!track.artist_id} onclick={() => track && openArtist(track)}>{track.artist}</button>
+        ·
+        <button class="nav-link" disabled={!track.album_id} onclick={() => track && openAlbum(track)}>{track.album}</button>
+      {:else}
+        Haz doble clic en una canción
+      {/if}
+    </p>
     <button class="lyrics-toggle" class:on={showLyrics} onclick={() => (showLyrics = !showLyrics)}>
       {showLyrics ? "Portada" : "Letra"}
     </button>

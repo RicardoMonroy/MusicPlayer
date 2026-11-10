@@ -230,6 +230,8 @@ fn on_key(app: &mut App, k: KeyEvent) {
         KeyCode::Char('t') => app.cycle_palette(),
         KeyCode::Char('l') => app.toggle_lyrics(),
         KeyCode::Char('y') => app.copy_album_url(),
+        KeyCode::Char('a') => app.open_track_page(mp_ytmusic::Kind::Artist),
+        KeyCode::Char('d') => app.open_track_page(mp_ytmusic::Kind::Album),
         KeyCode::Char('r')
             if matches!(
                 app.tab,
@@ -461,6 +463,33 @@ mod tests {
 
     fn key(app: &mut App, code: KeyCode) {
         on_key(app, KeyEvent::new(code, KeyModifiers::NONE));
+    }
+
+    #[test]
+    fn a_and_d_open_the_artist_and_album_of_the_queue_row() {
+        let mut a = app(Vec::new());
+        let mut yt = crate::app::tests::track("Uno", "Banda", "Disco");
+        yt.artist_id = Some("UCbanda".into());
+        yt.album_id = Some("MPREbdisco".into());
+        a.queue = vec![crate::app::tests::track("Local", "X", "Y"), yt];
+        for (code, kind, id) in [
+            ('a', mp_ytmusic::Kind::Artist, "UCbanda"),
+            ('d', mp_ytmusic::Kind::Album, "MPREbdisco"),
+        ] {
+            a.set_tab(Tab::Queue);
+            a.table.select(Some(1));
+            key(&mut a, KeyCode::Char(code));
+            assert_eq!(a.tab, Tab::Youtube);
+            assert!(matches!(&a.pending, Some(NetworkAction::Open(
+                crate::youtube::YoutubeRow::Collection(c), _)) if c.kind == kind && c.id == id));
+        }
+        // Local files have no YouTube page: stay put and say why.
+        a.pending = None;
+        a.set_tab(Tab::Queue);
+        a.table.select(Some(0));
+        key(&mut a, KeyCode::Char('a'));
+        assert_eq!(a.tab, Tab::Queue);
+        assert!(a.pending.is_none() && a.notice.is_some());
     }
 
     #[test]

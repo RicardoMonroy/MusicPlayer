@@ -69,3 +69,31 @@
   padding-right: 12px;
   padding-bottom: 16px;
 }
+/* Artist / album names that open their YouTube Music page. */
+.nav-link {
+  display: inline;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: inherit;
+  cursor: pointer;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+/* Faint underline so the names read as links before hovering. */
+.nav-link:not(:disabled) {
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 35%, transparent);
+  text-underline-offset: 3px;
+}
+.nav-link:hover:not(:disabled) {
+  text-decoration-color: currentColor;
+}
+.nav-link:disabled {
+  cursor: inherit;
+}

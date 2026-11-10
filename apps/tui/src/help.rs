@@ -41,6 +41,11 @@ pub const HELP: &[(&str, &str, &str)] = &[
         "Copiar URL del álbum de YouTube Music (fila de la cola o canción actual)",
     ),
     (
+        "Navegación y listas",
+        "a / d",
+        "Ir al artista / disco de YouTube Music (fila de la cola o canción actual); Esc vuelve",
+    ),
+    (
         "Reproducción",
         "n / p",
         "Siguiente / anterior; p tiene prioridad de colección local o remota abierta y de preajuste en ecualizador",

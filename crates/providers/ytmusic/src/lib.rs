@@ -149,14 +149,14 @@ impl YtMusic {
             Kind::Album => {
                 let a = q.music_album(id).await?;
                 let cover = best_thumb(&a.cover);
-                let album_id = a.playlist_id.clone().unwrap_or_else(|| id.to_string());
                 Ok(a.tracks
                     .into_iter()
                     .map(|t| {
                         let mut t = track(t);
                         t.album.clone_from(&a.name);
                         t.cover = t.cover.or_else(|| cover.clone());
-                        t.album_id = Some(album_id.clone());
+                        t.album_id = Some(id.to_string());
+                        t.artist_id = t.artist_id.or_else(|| a.artist_id.clone());
                         t
                     })
                     .collect())
@@ -339,6 +339,7 @@ fn track(t: TrackItem) -> Track {
         title: t.name,
         artist: names(&t.artists),
         album_id: t.album.as_ref().map(|a| a.id.clone()),
+        artist_id: t.artists.iter().find_map(|a| a.id.clone()),
         album: t.album.map(|a| a.name).unwrap_or_default(),
         uri: watch_url(&t.id),
         track_no: t.track_nr.map(u32::from),
@@ -562,6 +563,20 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let shelves = YtMusic::new(&dir).unwrap().home().await.unwrap();
         assert!(!shelves.is_empty() && shelves.iter().all(|s| !s.items.is_empty()));
+        let tracks: Vec<_> = shelves
+            .iter()
+            .flat_map(|s| &s.items)
+            .filter_map(|i| match i {
+                HomeItem::Track(t) => Some(t),
+                _ => None,
+            })
+            .collect();
+        let linked = tracks.iter().filter(|t| t.artist_id.is_some()).count();
+        eprintln!("home tracks: {}, with artist id: {linked}", tracks.len());
+        assert!(
+            tracks.is_empty() || linked > 0,
+            "home tracks lost their artist links"
+        );
     }
 
     /// Hits the network; run with `cargo test -p mp-ytmusic -- --ignored`.
@@ -586,8 +601,9 @@ mod tests {
                 .all(|t| t.cover.is_some() && !t.album.is_empty())
         );
         let album = tracks[0].album_id.as_deref().unwrap();
-        assert!(album.starts_with("OLAK5uy"), "{album}");
-        // Tracks from search carry the MPREb browse id; both resolve the same.
+        assert_eq!(album, r.albums[0].id);
+        assert!(tracks[0].artist_id.is_some());
+        // Search tracks carry the album browse id too; it resolves to OLAK5uy.
         let browse = r.tracks[0].album_id.as_deref().unwrap();
         let url = yt.album_url(browse).await.unwrap();
         assert!(

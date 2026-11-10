@@ -1,5 +1,6 @@
 <script lang="ts">
   import { player, fmtTime, type Track } from "$lib/player.svelte";
+  import { openArtist, openAlbum } from "$lib/nav.svelte";
 
   import { sortTracks, type TrackSort, type TrackColumn } from "$lib/local/library";
 
@@ -78,7 +79,8 @@
         <tr class:active={t.uri === player.track?.uri} ondblclick={() => activate(i)}>
           <td class="no">{t.track_no ?? "—"}</td>
           <td><button class="track-title" onclick={event => { if (event.detail === 0) activate(i); }}>{#if t.cover}<img src={t.cover} alt="" loading="lazy" />{/if}{t.title}</button></td>
-          <td>{t.artist || "—"}</td><td>{t.album || "—"}</td><td>{t.genre || "—"}</td>
+          <td><button class="nav-link" disabled={!t.artist_id} onclick={() => openArtist(t)}>{t.artist || "—"}</button></td>
+          <td><button class="nav-link" disabled={!t.album_id} onclick={() => openAlbum(t)}>{t.album || "—"}</button></td><td>{t.genre || "—"}</td>
           <td class="dur">{t.duration != null ? fmtTime(t.duration) : "—"}</td>
         </tr>
       {/each}
@@ -95,16 +97,17 @@
   {#each visible as t, j (t.uri + (range.start + j))}
     {@const i = range.start + j}
     <li class:active={t.uri === player.track?.uri}>
-      <button class="row" ondblclick={() => onplay(i)}>
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div class="row" ondblclick={() => onplay(i)}>
         <span class="no">{t.track_no ?? offset + i + 1}</span>
         <span class="title">
           {#if t.cover}<img src={t.cover} alt="" loading="lazy" />{/if}
           {t.title}
         </span>
-        <span class="artist">{t.artist}</span>
-        <span class="album">{t.album}</span>
+        <span class="artist"><button class="nav-link" disabled={!t.artist_id} onclick={() => openArtist(t)}>{t.artist}</button></span>
+        <span class="album"><button class="nav-link" disabled={!t.album_id} onclick={() => openAlbum(t)}>{t.album}</button></span>
         <span class="dur">{t.duration ? fmtTime(t.duration) : "—"}</span>
-      </button>
+      </div>
     </li>
   {/each}
 </ol>
