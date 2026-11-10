@@ -18,8 +18,6 @@ Reproductor de música para Windows, Linux y macOS, con una app de escritorio y 
 
 Todas las versiones: [página de releases](https://github.com/RicardoMonroy/MusicPlayer/releases).
 
-> **Repositorio privado:** mientras el repositorio sea privado, estos enlaces solo funcionan si inicias sesión en GitHub con una cuenta que tenga acceso. Para descargar desde la terminal usa `gh release download v0.1.0 -R RicardoMonroy/MusicPlayer`.
-
 **En todos los sistemas, YouTube Music necesita [`yt-dlp`](https://github.com/yt-dlp/yt-dlp)** instalado y en el `PATH`. La música local funciona sin él.
 
 ## Instalación
